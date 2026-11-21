@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 430 96" fill="none">
+  <defs>
+    <linearGradient id="voxa-bg-d" x1="8" y1="6" x2="72" y2="72" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#171B26"/>
+      <stop offset="100%" stop-color="#0B0D12"/>
+    </linearGradient>
+    <linearGradient id="voxa-cyan-d" x1="18" y1="18" x2="62" y2="66" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#38BDF8"/>
+      <stop offset="55%" stop-color="#00D4E5"/>
+      <stop offset="100%" stop-color="#06B6D4"/>
+    </linearGradient>
+    <linearGradient id="voxa-bars-d" x1="38" y1="14" x2="38" y2="38" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#67E8F9"/>
+      <stop offset="100%" stop-color="#00D4E5"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(8 10) scale(0.1484375)">
+    <rect x="16" y="16" width="480" height="480" rx="108" fill="url(#voxa-bg-d)"/>
+    <rect x="18" y="18" width="476" height="476" rx="106" stroke="#00D4E5" stroke-opacity="0.48" stroke-width="5"/>
+    <path d="M96 132H166L256 326L346 132H416L274 412H238L96 132Z" fill="url(#voxa-cyan-d)"/>
+    <rect x="202" y="114" width="22" height="72" rx="11" fill="url(#voxa-bars-d)"/>
+    <rect x="244" y="92" width="24" height="140" rx="12" fill="url(#voxa-bars-d)"/>
+    <rect x="288" y="114" width="22" height="72" rx="11" fill="url(#voxa-bars-d)"/>
+  </g>
+  <text x="104" y="50" fill="#F1F5F9" font-family="'Segoe UI', Inter, system-ui, -apple-system, sans-serif" font-size="38" font-weight="700" letter-spacing="-0.8">Voxa</text>
+  <rect x="204" y="25" width="76" height="26" rx="7" fill="#00D4E5" fill-opacity="0.14" stroke="#00D4E5" stroke-opacity="0.45" stroke-width="1"/>
+  <text x="242" y="42" text-anchor="middle" fill="#00D4E5" font-family="'Segoe UI', Inter, system-ui, -apple-system, sans-serif" font-size="12" font-weight="700" letter-spacing="1.8">STUDIO</text>
+  <text x="106" y="72" fill="#94A3B8" font-family="'Segoe UI', Inter, system-ui, -apple-system, sans-serif" font-size="11.5" font-weight="500" letter-spacing="1.6">LOCAL NEURAL VOICE STUDIO</text>
+</svg>

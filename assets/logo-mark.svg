@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <defs>
+    <linearGradient id="voxa-bg" x1="48" y1="32" x2="464" y2="480" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#171B26"/>
+      <stop offset="100%" stop-color="#0B0D12"/>
+    </linearGradient>
+    <linearGradient id="voxa-cyan" x1="112" y1="100" x2="400" y2="420" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#38BDF8"/>
+      <stop offset="55%" stop-color="#00D4E5"/>
+      <stop offset="100%" stop-color="#06B6D4"/>
+    </linearGradient>
+    <linearGradient id="voxa-bars" x1="256" y1="90" x2="256" y2="240" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#67E8F9"/>
+      <stop offset="100%" stop-color="#00D4E5"/>
+    </linearGradient>
+  </defs>
+  <rect x="16" y="16" width="480" height="480" rx="108" fill="url(#voxa-bg)"/>
+  <rect x="18" y="18" width="476" height="476" rx="106" stroke="#00D4E5" stroke-opacity="0.42" stroke-width="4"/>
+  <rect x="30" y="30" width="452" height="452" rx="94" stroke="#262C3A" stroke-width="2"/>
+  <path d="M96 132H166L256 326L346 132H416L274 412H238L96 132Z" fill="url(#voxa-cyan)"/>
+  <rect x="202" y="114" width="22" height="72" rx="11" fill="url(#voxa-bars)"/>
+  <rect x="244" y="92" width="24" height="140" rx="12" fill="url(#voxa-bars)"/>
+  <rect x="288" y="114" width="22" height="72" rx="11" fill="url(#voxa-bars)"/>
+</svg>

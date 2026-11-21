@@ -1,0 +1,25 @@
+[package]
+name = "voxa-studio"
+version = "1.0.0"
+edition = "2021"
+description = "Voxa Studio — Local-first neural voice, expression, and zero-shot cloning studio"
+license = "Apache-2.0"
+
+[[bin]]
+name = "voxa-studio"
+path = "src/main.rs"
+
+[dependencies]
+eframe = { version = "0.31", default-features = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rodio = { version = "0.20", default-features = false, features = ["wav", "symphonia-all"] }
+cpal = "0.15"
+hound = "3.5"
+rfd = "0.15"
+chrono = { version = "0.4", features = ["serde"] }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = true

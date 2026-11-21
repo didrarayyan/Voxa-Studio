@@ -1,0 +1,22 @@
+# Python & virtual environments
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Rust build artifacts & compiled executables
+voxa-studio/target/
+*.exe
+*.pdb
+
+# Local user data & generated audio outputs
+studio_data/
+temp_audio/
+
+# IDE & OS metadata
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+.vscode/
+.idea/
