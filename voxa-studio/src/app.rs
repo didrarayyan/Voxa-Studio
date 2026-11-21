@@ -3016,74 +3016,74 @@ impl VoxaStudioApp {
                         );
                     }
                 }
-
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui
-                        .button("Tags Guide")
-                        .on_hover_text("Open interactive guide for [emotion], <event>, and (((emphasis))) tags")
-                        .clicked()
-                    {
-                        self.show_tags_guide = true;
-                    }
-                    if ui.button("Clear").clicked() {
-                        if use_clone {
-                            self.clone_text.clear();
+            });
+            ui.add_space(4.0);
+            ui.horizontal_wrapped(|ui| {
+                egui::ComboBox::from_id_salt(if use_clone {
+                    "clone_starters"
+                } else {
+                    "speak_starters"
+                })
+                .selected_text("Story Starters")
+                .show_ui(ui, |ui| {
+                    for starter in STORY_STARTERS {
+                        let label = if starter.needs_kitten2 && !supports_expression {
+                            format!("{} (Best on Kitten-TTS-2)", starter.title)
                         } else {
-                            self.speak_text.clear();
-                        }
-                    }
-                    if ui
-                        .button("Import File / Book")
-                        .on_hover_text("Import .txt, .md, .epub book, or .pdf document")
-                        .clicked()
-                    {
-                        if let Some(path) = rfd::FileDialog::new()
-                            .add_filter("Scripts & Books", &["txt", "md", "epub", "pdf"])
-                            .pick_file()
-                        {
-                            let ext = path
-                                .extension()
-                                .and_then(|e| e.to_str())
-                                .map(|s| s.to_ascii_lowercase())
-                                .unwrap_or_default();
-                            if ext == "epub" || ext == "pdf" {
-                                self.open_book_document(&path);
-                            } else if let Ok(content) = std::fs::read_to_string(&path) {
-                                self.loaded_doc_title = None;
-                                self.loaded_chapters.clear();
-                                self.loaded_chapter_idx = 0;
-                                if use_clone {
-                                    self.clone_text = content;
-                                } else {
-                                    self.speak_text = content;
-                                }
-                            }
-                        }
-                    }
-                    egui::ComboBox::from_id_salt(if use_clone {
-                        "clone_starters"
-                    } else {
-                        "speak_starters"
-                    })
-                    .selected_text("Story Starters")
-                    .show_ui(ui, |ui| {
-                        for starter in STORY_STARTERS {
-                            let label = if starter.needs_kitten2 && !supports_expression {
-                                format!("{} (Best on Kitten-TTS-2)", starter.title)
+                            starter.title.to_string()
+                        };
+                        if ui.selectable_label(false, label).clicked() {
+                            if use_clone {
+                                self.clone_text = starter.text.to_string();
                             } else {
-                                starter.title.to_string()
-                            };
-                            if ui.selectable_label(false, label).clicked() {
-                                if use_clone {
-                                    self.clone_text = starter.text.to_string();
-                                } else {
-                                    self.speak_text = starter.text.to_string();
-                                    self.last_auto_sample = starter.text.to_string();
-                                }
+                                self.speak_text = starter.text.to_string();
+                                self.last_auto_sample = starter.text.to_string();
                             }
                         }
-                    });
+                    }
                 });
+                if ui
+                    .button("Import File / Book")
+                    .on_hover_text("Import .txt, .md, .epub book, or .pdf document")
+                    .clicked()
+                {
+                    if let Some(path) = rfd::FileDialog::new()
+                        .add_filter("Scripts & Books", &["txt", "md", "epub", "pdf"])
+                        .pick_file()
+                    {
+                        let ext = path
+                            .extension()
+                            .and_then(|e| e.to_str())
+                            .map(|s| s.to_ascii_lowercase())
+                            .unwrap_or_default();
+                        if ext == "epub" || ext == "pdf" {
+                            self.open_book_document(&path);
+                        } else if let Ok(content) = std::fs::read_to_string(&path) {
+                            self.loaded_doc_title = None;
+                            self.loaded_chapters.clear();
+                            self.loaded_chapter_idx = 0;
+                            if use_clone {
+                                self.clone_text = content;
+                            } else {
+                                self.speak_text = content;
+                            }
+                        }
+                    }
+                }
+                if ui.button("Clear").clicked() {
+                    if use_clone {
+                        self.clone_text.clear();
+                    } else {
+                        self.speak_text.clear();
+                    }
+                }
+                if ui
+                    .button("Tags Guide")
+                    .on_hover_text("Open interactive guide for [emotion], <event>, and (((emphasis))) tags")
+                    .clicked()
+                {
+                    self.show_tags_guide = true;
+                }
             });
 
             ui.add_space(8.0);
@@ -3107,7 +3107,7 @@ impl VoxaStudioApp {
                         ui.horizontal_wrapped(|ui| {
                             pill_badge(
                                 ui,
-                                &format!("Book · {}", truncate_str(doc_title, 28)),
+                                &format!("Book · {}", truncate_str(doc_title, 18)),
                                 pal.accent_blue_soft,
                                 pal.accent_blue,
                             );
@@ -3125,13 +3125,13 @@ impl VoxaStudioApp {
                                         "{}/{}: {}",
                                         self.loaded_chapter_idx + 1,
                                         total_ch,
-                                        truncate_str(&c.title, 26)
+                                        truncate_str(&c.title, 20)
                                     )
                                 })
                                 .unwrap_or_default();
                             egui::ComboBox::from_id_salt("book_chapter_combo")
                                 .selected_text(cur_label)
-                                .width(220.0)
+                                .width(175.0)
                                 .show_ui(ui, |ui| {
                                     for (idx, ch) in self.loaded_chapters.iter().enumerate() {
                                         if ui
@@ -3159,7 +3159,7 @@ impl VoxaStudioApp {
                             {
                                 select_idx = Some((self.loaded_chapter_idx + 1).min(total_ch - 1));
                             }
-                            if total_ch > 1 && ui.small_button("Load All").clicked() {
+                            if total_ch > 1 && ui.small_button("All").on_hover_text("Load all chapters combined").clicked() {
                                 merge_all = true;
                             }
                             if ui.small_button("Close").clicked() {
@@ -3256,10 +3256,10 @@ impl VoxaStudioApp {
                             let text_out = egui::TextEdit::multiline(target)
                                 .frame(false)
                                 .font(egui::FontId::proportional(15.0))
-                                .desired_rows(if use_clone { 6 } else { 9 })
+                                .desired_rows(if use_clone || !self.loaded_chapters.is_empty() { 6 } else { 8 })
                                 .desired_width(inner_w)
                                 .layouter(&mut layouter)
-                                .hint_text("Type or paste your story, dialogue, or script here... (Or drop a .txt file anywhere!)")
+                                .hint_text("Type or paste your story, dialogue, or script here... (Or drop a .txt, .md, .epub, or .pdf anywhere!)")
                                 .show(ui);
 
                             if text_out.response.hovered() {
@@ -3951,30 +3951,30 @@ impl VoxaStudioApp {
                     );
                     ui.add_space(8.0);
 
-                    let card_w = ((ui.available_width() - 44.0) / 3.0).max(170.0);
-                    ui.horizontal_wrapped(|ui| {
-                        for (title, repo_id, tag, summary) in [
-                            (
-                                "Fast Everyday CPU",
-                                "KittenML/kitten-tts-2-nano",
-                                "~200 MB RAM · Instant",
-                                "Lightweight 8-language speech that runs faster than real time on any CPU.",
-                            ),
-                            (
-                                "Books & Voice Blend",
-                                "kokoro-tts/kokoro-v1.0",
-                                "~300 MB RAM · 54 Voices",
-                                "Kokoro-82M crisp voices with dual-voice blending & EPUB/PDF chapter reader.",
-                            ),
-                            (
-                                "Cloning & Emotions",
-                                "KittenML/kitten-tts-2",
-                                "1.7B · 115 Voices",
-                                "Zero-shot voice cloning from 5-30s audio plus native [emotion] & <event> tags.",
-                            ),
-                        ] {
+                    let mut picked_repo: Option<&'static str> = None;
+                    let presets = [
+                        (
+                            "Fast Everyday CPU",
+                            "KittenML/kitten-tts-2-nano",
+                            "~200 MB RAM · Instant",
+                            "Lightweight 8-language speech that runs faster than real time on any CPU.",
+                        ),
+                        (
+                            "Books & Voice Blend",
+                            "kokoro-tts/kokoro-v1.0",
+                            "~300 MB RAM · 54 Voices",
+                            "Kokoro-82M crisp voices with dual-voice blending & EPUB/PDF chapter reader.",
+                        ),
+                        (
+                            "Cloning & Emotions",
+                            "KittenML/kitten-tts-2",
+                            "1.7B · 115 Voices",
+                            "Zero-shot voice cloning from 5-30s audio plus native [emotion] & <event> tags.",
+                        ),
+                    ];
+                    ui.columns(3, |cols| {
+                        for (idx, (title, repo_id, tag, summary)) in presets.into_iter().enumerate() {
                             let is_active = loaded_model_name.as_deref() == Some(repo_id);
-                            let mut pick = false;
                             egui::Frame::new()
                                 .fill(if is_active { pal.card_bg } else { pal.card_alt })
                                 .stroke(Stroke::new(
@@ -3983,62 +3983,95 @@ impl VoxaStudioApp {
                                 ))
                                 .corner_radius(CornerRadius::same(10))
                                 .inner_margin(egui::Margin::same(11))
-                                .show(ui, |ui| {
-                                    ui.set_min_width(card_w);
-                                    ui.set_max_width(card_w);
-                                    ui.horizontal(|ui| {
+                                .show(&mut cols[idx], |ui| {
+                                    ui.set_min_width(ui.available_width());
+                                    ui.vertical(|ui| {
                                         ui.label(
                                             RichText::new(title)
                                                 .strong()
                                                 .size(13.5)
                                                 .color(if is_active { pal.success } else { pal.ink }),
                                         );
+                                        ui.add_space(4.0);
+                                        ui.horizontal(|ui| {
+                                            pill_badge(
+                                                ui,
+                                                tag,
+                                                pal.accent_blue_soft,
+                                                pal.accent_blue,
+                                            );
+                                        });
+                                        ui.add_space(5.0);
+                                        ui.allocate_ui_with_layout(
+                                            Vec2::new(ui.available_width(), 38.0),
+                                            egui::Layout::top_down(egui::Align::LEFT),
+                                            |ui| {
+                                                ui.label(
+                                                    RichText::new(summary)
+                                                        .size(11.5)
+                                                        .color(pal.ink_muted),
+                                                );
+                                            },
+                                        );
+                                        ui.add_space(6.0);
+                                        let footer_w = ui.available_width().max(100.0);
+                                        if is_active {
+                                            egui::Frame::new()
+                                                .fill(pal.success_soft)
+                                                .stroke(Stroke::new(
+                                                    1.0_f32,
+                                                    pal.success.gamma_multiply(0.5),
+                                                ))
+                                                .corner_radius(CornerRadius::same(7))
+                                                .show(ui, |ui| {
+                                                    ui.allocate_ui_with_layout(
+                                                        Vec2::new(footer_w - 2.0, 26.0),
+                                                        egui::Layout::centered_and_justified(
+                                                            egui::Direction::LeftToRight,
+                                                        ),
+                                                        |ui| {
+                                                            ui.label(
+                                                                RichText::new("Active Engine")
+                                                                    .size(12.0)
+                                                                    .strong()
+                                                                    .color(pal.success),
+                                                            );
+                                                        },
+                                                    );
+                                                });
+                                        } else {
+                                            let btn = egui::Button::new(
+                                                RichText::new("Use This Engine")
+                                                    .size(12.0)
+                                                    .strong()
+                                                    .color(pal.on_primary),
+                                            )
+                                            .fill(pal.primary)
+                                            .min_size(Vec2::new(footer_w, 28.0))
+                                            .corner_radius(CornerRadius::same(7));
+                                            if ui.add(btn).clicked() {
+                                                picked_repo = Some(repo_id);
+                                            }
+                                        }
                                     });
-                                    pill_badge(
-                                        ui,
-                                        tag,
-                                        pal.accent_blue_soft,
-                                        pal.accent_blue,
-                                    );
-                                    ui.add_space(3.0);
-                                    ui.label(
-                                        RichText::new(summary).size(11.5).color(pal.ink_muted),
-                                    );
-                                    ui.add_space(6.0);
-                                    if is_active {
-                                        pill_badge(ui, "Active Engine", pal.success_soft, pal.success);
-                                    } else {
-                                        let btn = egui::Button::new(
-                                            RichText::new("Use This Engine")
-                                                .size(12.0)
-                                                .strong()
-                                                .color(pal.on_primary),
-                                        )
-                                        .fill(pal.primary)
-                                        .min_size(Vec2::new((card_w - 22.0).max(100.0), 26.0))
-                                        .corner_radius(CornerRadius::same(7));
-                                        if ui.add(btn).clicked() {
-                                            pick = true;
-                                        }
-                                    }
                                 });
-                            if pick {
-                                self.draft_model_name = repo_id.to_string();
-                                self.draft_custom_repo.clear();
-                                if let Some(entry) = MODEL_CATALOG.iter().find(|e| e.repo_id == repo_id) {
-                                    if let Some(dw) = entry.default_weights {
-                                        match entry.category {
-                                            ModelCategory::TinyCpu => self.draft_tiny_weights = dw.to_string(),
-                                            ModelCategory::KokoroOnnx => self.draft_kokoro_weights = dw.to_string(),
-                                            ModelCategory::StudioLm => self.draft_k2_weights = dw.to_string(),
-                                            ModelCategory::LegacyOnnx => {}
-                                        }
-                                    }
-                                }
-                                switch_requested = true;
-                            }
                         }
                     });
+                    if let Some(repo_id) = picked_repo {
+                        self.draft_model_name = repo_id.to_string();
+                        self.draft_custom_repo.clear();
+                        if let Some(entry) = MODEL_CATALOG.iter().find(|e| e.repo_id == repo_id) {
+                            if let Some(dw) = entry.default_weights {
+                                match entry.category {
+                                    ModelCategory::TinyCpu => self.draft_tiny_weights = dw.to_string(),
+                                    ModelCategory::KokoroOnnx => self.draft_kokoro_weights = dw.to_string(),
+                                    ModelCategory::StudioLm => self.draft_k2_weights = dw.to_string(),
+                                    ModelCategory::LegacyOnnx => {}
+                                }
+                            }
+                        }
+                        switch_requested = true;
+                    }
                 });
 
                 ui.add_space(10.0);
