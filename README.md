@@ -124,7 +124,7 @@ flowchart LR
 
 ## Memory Engineering
 
-Large 1.7B models can easily spike host RAM past `10–11 GB` under naïve CPU loading and voice cloning. Voxa Studio addresses this inside [`voxa-studio/backend/worker.py`](voxa-studio/backend/worker.py) without altering the upstream `KittenTTS/` submodule:
+Large 1.7B models can easily spike host RAM past `10–11 GB` under naïve CPU loading and voice cloning. Voxa Studio addresses this inside [`voxa-studio/backend/worker.py`](voxa-studio/backend/worker.py) without patching the upstream `kittenml` package:
 
 1. **Meta-Device Streaming Loader**: Constructs the transformer skeleton on `torch.device("meta")`, materializes rotary embeddings on the target device, and streams unpacked `emb4`/`packed` weights tensor-by-tensor — cutting peak load commit from `~11.0 GB` down to `~8.3 GB` (and eliminating duplicate 1.7B parameter allocation).
 2. **Auto-Unloading Voice Clone Helpers**: Automatically uses `openai/whisper-base` instead of 1.55B `whisper-large-v3` on CPU auto-transcription, and unloads both Whisper and `SpeakerEncoder` immediately after encoding.
@@ -147,11 +147,10 @@ Voxa-Studio/
 │   ├── src/                   # main.rs, app.rs, theme.rs, protocol.rs, worker.rs, audio.rs, recorder.rs, state.rs
 │   └── backend/
 │       └── worker.py          # JSON-lines sidecar, DSP engine & memory manager
-├── KittenTTS/                 # Clean upstream KittenML/KittenTTS git submodule
 ├── .venv/                     # Local Python 3.11 runtime (not tracked)
 ├── studio_data/               # Persisted app config, history, outputs & saved voice profiles
-├── .gitmodules
 ├── .gitignore
+├── requirements.txt           # Installs upstream kittenml synthesis engine via pip
 ├── LICENSE
 └── README.md
 ```
@@ -163,13 +162,21 @@ Voxa-Studio/
 ### Prerequisites
 
 - **Rust** toolchain (`1.80+`, tested with `rustc 1.100.0 x86_64-pc-windows-gnu`) and `windres` (included with LLVM-MinGW)
-- **Python 3.11** virtual environment in `.venv\` with `KittenTTS` dependencies installed (`kittenml`, `torch`, `onnxruntime`, `soundfile`, `scipy`, `librosa`)
+- **Python 3.11** (for the synthesis sidecar `.venv\`)
 
 ### Clone, Test & Release Build
 
 ```powershell
-git clone --recurse-submodules https://github.com/didrarayyan/Voxa-Studio.git
-cd Voxa-Studio\voxa-studio
+git clone https://github.com/didrarayyan/Voxa-Studio.git
+cd Voxa-Studio
+
+# Set up Python synthesis sidecar
+python -m venv .venv
+.\.venv\Scripts\pip.exe install -r requirements.txt
+.\.venv\Scripts\python.exe -m spacy download en_core_web_sm
+
+# Run Rust tests & build release executable
+cd voxa-studio
 cargo test
 cargo build --release
 Copy-Item .\target\release\voxa-studio.exe ..\Voxa-Studio.exe -Force
@@ -185,7 +192,7 @@ Copy-Item .\target\release\voxa-studio.exe ..\Voxa-Studio.exe -Force
 
 - **Download stalled or switched engine by mistake?** Click **Cancel Download** in the status card to abort cleanly and restore the previous active engine.
 - **High RAM after heavy Voice Cloning?** Click **Free RAM** in the top studio bar to release transient Whisper/speaker encoders and trim inactive working-set pages.
-- **Run upstream Python CLI directly:** `.\.venv\Scripts\python.exe .\KittenTTS\example_tiny.py`
+- **Verify Python speech backend:** `.\.venv\Scripts\python.exe -c "import kittenml; print('kittenml ready')"`
 
 </details>
 

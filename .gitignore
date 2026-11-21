@@ -1,5 +1,6 @@
-# Python & virtual environments
+# Python, virtual environments & local upstream checkout
 .venv/
+KittenTTS/
 __pycache__/
 *.py[cod]
 *.egg-info/
