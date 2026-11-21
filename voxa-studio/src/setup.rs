@@ -295,7 +295,7 @@ fn register_windows_uninstaller(
         "$key = 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\VoxaStudio'; \
          New-Item -Path $key -Force | Out-Null; \
          Set-ItemProperty -Path $key -Name 'DisplayName' -Value 'Voxa Studio'; \
-         Set-ItemProperty -Path $key -Name 'DisplayVersion' -Value '1.0.0'; \
+         Set-ItemProperty -Path $key -Name 'DisplayVersion' -Value '1.1.0'; \
          Set-ItemProperty -Path $key -Name 'Publisher' -Value 'Voxa Studio Contributors'; \
          Set-ItemProperty -Path $key -Name 'DisplayIcon' -Value '{icon}'; \
          Set-ItemProperty -Path $key -Name 'InstallLocation' -Value '{dir}'; \
@@ -537,7 +537,7 @@ impl VoxaSetupApp {
             launch_after: true,
             stage: WizardStage::Configure,
             progress: 0.0,
-            status_line: "Ready to install Voxa Studio v1.0.0".to_string(),
+            status_line: "Ready to install Voxa Studio v1.1.0".to_string(),
             logs: Vec::new(),
             rx: None,
             auto_launched: false,
@@ -668,7 +668,7 @@ impl eframe::App for VoxaSetupApp {
                                 .inner_margin(egui::Margin::symmetric(7, 2))
                                 .show(ui, |ui| {
                                     ui.label(
-                                        RichText::new("SETUP · v1.0.0")
+                                        RichText::new("SETUP · v1.1.0")
                                             .size(11.0)
                                             .strong()
                                             .color(PRIMARY),
@@ -875,7 +875,7 @@ impl eframe::App for VoxaSetupApp {
                             WizardStage::Complete => (
                                 SUCCESS_SOFT,
                                 SUCCESS,
-                                "Voxa Studio v1.0.0 Installed Successfully".to_string(),
+                                "Voxa Studio v1.1.0 Installed Successfully".to_string(),
                             ),
                             WizardStage::Failed(err) => (
                                 DANGER_SOFT,
@@ -952,7 +952,7 @@ impl eframe::App for VoxaSetupApp {
 
 fn main() -> eframe::Result<()> {
     let mut viewport = egui::ViewportBuilder::default()
-        .with_title("Voxa Studio Setup — v1.0.0")
+        .with_title("Voxa Studio Setup — v1.1.0")
         .with_inner_size([680.0, 520.0])
         .with_min_inner_size([620.0, 480.0]);
     if let Some(icon) = load_setup_icon() {

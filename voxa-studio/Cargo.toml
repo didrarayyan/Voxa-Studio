@@ -1,9 +1,10 @@
 [package]
 name = "voxa-studio"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2021"
 description = "Voxa Studio — Local-first neural voice, expression, and zero-shot cloning studio"
 license = "Apache-2.0"
+default-run = "voxa-studio"
 
 [features]
 installer = []

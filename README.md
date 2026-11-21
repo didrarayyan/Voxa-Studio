@@ -13,7 +13,7 @@
   <img alt="Python 3.11" src="https://img.shields.io/badge/Python-3.11-3776AB?logo=python&logoColor=white&style=flat-square">
   <img alt="Platform Windows" src="https://img.shields.io/badge/Platform-Windows%2011%2F10-0078D6?logo=windows&logoColor=white&style=flat-square">
   <img alt="License Apache-2.0" src="https://img.shields.io/badge/License-Apache--2.0-0891B2?style=flat-square">
-  <img alt="Engine KittenTTS" src="https://img.shields.io/badge/Engine-KittenTTS%20v2-00D4E5?style=flat-square">
+  <img alt="Engines KittenTTS + Kokoro-82M" src="https://img.shields.io/badge/Engines-KittenTTS%20v2%20%2B%20Kokoro--82M-00D4E5?style=flat-square">
 </p>
 
 <img src="assets/hero-banner.png" alt="Voxa Studio Acoustic Workspace" width="100%">
@@ -34,10 +34,10 @@
 
 ---
 
-**Voxa Studio** is a native Rust desktop workspace (`eframe` / `egui`) paired with a silent Python neural synthesis sidecar. It brings fast offline text-to-speech, inline expressive voice direction (`[emotion]`, `<event>`, `(((emphasis)))`), zero-shot voice cloning, live download telemetry, and a scrubbable multi-format audio timeline to Windows without requiring terminal commands.
+**Voxa Studio** is a native Rust desktop workspace (`eframe` / `egui`) paired with a silent Python neural synthesis sidecar. It brings fast offline text-to-speech, Kokoro-82M 54-voice dual-voice blending, EPUB & PDF book/chapter reading, inline expressive voice direction (`[emotion]`, `<event>`, `(((emphasis)))`), zero-shot voice cloning, live download telemetry, and a scrubbable multi-format audio timeline to Windows without requiring terminal commands.
 
 > [!NOTE]
-> Powered by the open-source [KittenML/KittenTTS](https://github.com/KittenML/KittenTTS) speech models (`Apache-2.0`). Models are automatically fetched from Hugging Face on first selection and cached locally in `~/.cache/huggingface` for private offline use.
+> Powered by [KittenML/KittenTTS](https://github.com/KittenML/KittenTTS) (`Apache-2.0`) and [nazdridoy/kokoro-tts](https://github.com/nazdridoy/kokoro-tts) / [thewh1teagle/kokoro-onnx](https://github.com/thewh1teagle/kokoro-onnx) (`MIT`). Models are fetched automatically on first selection and cached locally in `~/.cache/huggingface` and `~/.cache/voxa-studio` for private offline use.
 
 ---
 
@@ -45,11 +45,12 @@
 
 - **One-Click Windows Setup (`Voxa-Studio-Setup.exe`)** — Pure-Rust Windows installer provisions `.venv`, installs neural backends without requiring Git, and creates Desktop & Start Menu shortcuts.
 - **Native Dark & Light Studio UI** — High-contrast obsidian and electric-cyan dark studio palette alongside a crisp slate light mode with persisted user settings (`studio_data/config.json`).
-- **Speak Studio** — Searchable multi-language voice browser with Favorites (`★`), voice personality notes, one-click **Sample** previews, **Story Starters**, and `.txt` / `.md` file drag-and-drop.
+- **Speak Studio & Book Reader** — Searchable multi-language voice browser with Favorites (`★`), voice personality notes, one-click **Sample** previews, **Story Starters**, and **Import File / Book** (`.txt`, `.md`, `.epub`, `.pdf` drag-and-drop with chapter navigation).
+- **Kokoro-82M Studio Voices & Dual-Voice Blending** — 54 crisp 24 kHz voices across 9 languages (`en-us`, `en-gb`, `ja`, `cmn`, `es`, `fr-fr`, `it`, `hi`, `pt-br`) with real-time dual-voice style blending (`50/50`, `60/40`, `70/30` presets or custom slider).
 - **Color-Coded Expression Markup & Hover Inspector** — Highlights `[emotion]`, `<event>`, and `(((emphasis)))` tags inline inside the script editor, shows contextual tooltips on hover, and includes an interactive **Tags Guide**. Tags steer vocal delivery and are never read aloud as words.
 - **Zero-Shot Voice Cloning** — Clone any voice from a 5–30s audio upload or built-in microphone recording with live peak metering, saved **Voice Profiles**, and optional automatic Whisper transcription.
 - **Interactive Timeline & Audio Export** — Scrubbable waveform ruler, real-time streamed chunk playback, playback volume control, and lossless/compressed export (`WAV`, `MP3`, `FLAC`, `OGG`).
-- **Engine Switcher & Live Download Control** — Switch immediately between ultra-fast ONNX CPU models and the 1.7B neural speech LM, monitor per-file download progress (`MB/s`, ETA), or cancel mid-download while restoring the previous working engine.
+- **Quick Pick Engine Switcher & Live Download Control** — Choose engines by use case (**Fastest CPU**, **Balanced Multi-Language**, **Book & Voice Blending**, or **Voice Cloning**), filter by category, monitor per-file download progress (`MB/s`, ETA), or cancel mid-download while restoring the previous working engine.
 - **Engine Activity Log & RAM Guardrails** — Copyable activity log, Hugging Face cache/symlink warning suppression, meta-device streaming model loader, and one-click **Free RAM** cleanup.
 
 ---
@@ -66,8 +67,8 @@ The workspace is structured into five non-overlapping studio zones:
 
 1. **Top Studio Header Bar** — Switch between **Speak Studio**, **Voice Clone**, and **Models & Engine** on the left; on the right, inspect the active engine pill (`kitten-tts-2 · emb4`), toggle **Light / Dark** mode, release transient host memory with **Free RAM**, open **Guide**, or **Export** rendered audio.
 2. **Left Voice Pool** — Filter voices by language, search by voice name or vocal character, click the star icon (`★`) to pin **Favorites**, click **Sample** for a quick voice preview, or click a voice card to select it.
-3. **Center Script Canvas** — Write narration directly, load curated **Story Starters**, or drag-and-drop `.txt` / `.md` files. Expression tags (`[joyful]`, `<laugh>`, `(((amazing)))`) render in distinct colors right inside the editor with instant hover tooltips. Press **`Ctrl+Enter`** (or click **Generate Speech**) to synthesize.
-4. **Right Inspector & Recent Takes** — Choose Delivery Mode (**Stable**, **Expressive**, or **Custom Sampling**), toggle **Expand numbers & dates**, **Stream chunks live**, and **Auto-play generated**, preview spoken normalization/phonemes, tune **Advanced LM Knobs**, or replay clips from **Recent Takes**.
+3. **Center Script Canvas** — Write narration directly, load curated **Story Starters**, or click **Import File / Book** (or drag-and-drop `.txt`, `.md`, `.epub`, or `.pdf` files with chapter navigation). Expression tags (`[joyful]`, `<laugh>`, `(((amazing)))`) render in distinct colors right inside the editor with instant hover tooltips. Press **`Ctrl+Enter`** (or click **Generate Speech**) to synthesize.
+4. **Right Inspector & Recent Takes** — Choose Delivery Mode (**Stable**, **Expressive**, or **Custom Sampling**), blend two Kokoro voices smoothly, toggle **Expand numbers & dates**, **Stream chunks live**, and **Auto-play generated**, preview spoken normalization/phonemes, or replay clips from **Recent Takes**.
 5. **Bottom Audio Timeline Dock** — Press **`Space`** or click Play/Pause/Stop/Replay, click or drag anywhere on the time-ruled waveform clip to scrub, adjust playback **Vol**, and save as **`WAV`**, **`MP3`**, **`FLAC`**, or **`OGG`**.
 
 <details>
@@ -80,7 +81,21 @@ The workspace is structured into five non-overlapping studio zones:
 
 ---
 
-### 2. Expression & Voice Tags Guide
+### 2. Kokoro-82M, Voice Blending & EPUB/PDF Book Reader
+
+<p align="center">
+  <img src="assets/screenshots/07-kokoro-blend.png" alt="Voxa Studio Kokoro-82M Voice Blending and EPUB/PDF Chapter Reader" width="100%">
+</p>
+
+Activate **Kokoro-82M (v1.0 ONNX)** to unlock 54 crisp studio voices across 9 languages alongside native voice blending and multi-chapter document reading:
+
+1. **54-Voice / 9-Language Catalog** — Browse dedicated US & UK English, Japanese, Mandarin Chinese, Spanish, French, Italian, Hindi, and Brazilian Portuguese voices with searchable personality descriptions.
+2. **Dual-Voice Blending (Right Inspector)** — Enable **Blend two voices** in the Right Inspector, pick a second partner voice, and shape the mix with one-click ratio presets (**50/50**, **60/40**, **70/30**) or the fine weight slider to interpolate speaker style vectors cleanly.
+3. **EPUB & PDF Book / Chapter Reader** — Click **Import File / Book** (or drop `.epub` / `.pdf` / `.txt` / `.md` onto the workspace) to extract book chapters cleanly and step through them with **Prev** / **Next Chapter** controls right above the script editor.
+
+---
+
+### 3. Expression & Voice Tags Guide
 
 <p align="center">
   <img src="assets/screenshots/03-tags-guide.png" alt="Voxa Studio Expression and Voice Tags Guide" width="100%">
@@ -95,7 +110,7 @@ Click **Tags Guide** above the Script editor (or **Open Full Tags Guide** below 
 
 ---
 
-### 3. Voice Clone Studio
+### 4. Voice Clone Studio
 
 <p align="center">
   <img src="assets/screenshots/04-voice-clone.png" alt="Voxa Studio Zero-Shot Voice Clone Workspace" width="100%">
@@ -110,22 +125,22 @@ Switch to the **Voice Clone** tab to clone any speaking style in seconds:
 
 ---
 
-### 4. Models & Engine Manager
+### 5. Models & Engine Manager
 
 <p align="center">
   <img src="assets/screenshots/05-models-engine.png" alt="Voxa Studio Models and Engine Manager" width="100%">
 </p>
 
-Open **Models & Engine** (or click the green active-engine pill in the top header) to switch speech engines and monitor downloads:
+Open **Models & Engine** (or click the green active-engine pill in the top header) to pick an engine by goal, switch precision cleanly, and monitor downloads:
 
-1. **Currently Loaded Engine & `Free RAM`** — Displays the active repo ID, sample rate (`24000 Hz`), backend (`onnx` / `torch`), device (`cpu` / `cuda`), weights, decoder, voice count, and a **Free RAM** control that releases transient helpers and trims unused working-set memory.
-2. **Fast Everyday Voices vs. Full 1.7B Studio** — Click **Activate** on **Kitten-TTS-2 Nano / Pico / Mini** for sub-second CPU read-aloud (`~160–350 MB` model footprint), or select **Kitten-TTS-2 (1.7B Studio)** for 115 built-in voices, zero-shot voice cloning, and native neural expressions.
-3. **Live Download Telemetry & Cancellation** — First-time downloads show real-time progress bar, transferred bytes, live speed (`MB/s`), ETA, and a **Cancel Download** button that aborts safely and restores the previous working engine.
-4. **Engine Settings & Copyable Activity Log** — Configure quantization (`int4` / `int8`, `emb4` / `packed` / `full`), decoder (`student_w4` / `default`), CPU/CUDA device, CPU threads, custom Hugging Face repo paths, and inspect or copy diagnostics from **Engine Activity Log**.
+1. **Quick Pick — Choose by What You Need** — Three plain-English preset cards (**Fast Everyday CPU**, **Books & Voice Blend**, and **Cloning & Emotions**) launch the right engine in one click.
+2. **Active Engine Capability Strip, `Free RAM` & `Unload`** — Shows the active repo ID, sample rate (`24000 Hz`), precision, voice count, supported capabilities (`Voice Blending`, `Zero-Shot Cloning`, `Neural Expression`, etc.), **Free RAM**, and **Unload Model**.
+3. **Category Filter Pills & Inline Quality Selector** — Filter the catalog (**All**, **Fast CPU**, **Kokoro-82M**, **1.7B Studio**, **Classic 0.8**) and pick plain-English size/quality variants (`Balanced 88 MB` / `FP16` / `FP32` for Kokoro, `Compact int8` / `Tiny int4` for Nano/Pico/Mini, or `Compact 4-bit emb4` for 1.7B) directly inside the active card, with live transfer speed (`MB/s`), ETA, and **Cancel Download** safety.
+4. **Collapsible Advanced Settings & Copyable Activity Log** — Tuck CPU/CUDA device, CPU thread count, custom repo IDs, and cache/token overrides under **Advanced Hardware, Custom Models & Cache**, with live diagnostics in **Engine Activity Log**.
 
 ---
 
-### 5. In-App Quick Guide
+### 6. In-App Quick Guide
 
 <p align="center">
   <img src="assets/screenshots/06-quick-guide.png" alt="Voxa Studio In-App Quick Guide" width="100%">
@@ -143,7 +158,7 @@ Click **Guide** in the top header anytime to summon the compact **Quick Guide �
 
 [![Download Voxa-Studio-Setup.exe](https://img.shields.io/badge/Download-Voxa--Studio--Setup.exe%20(Windows%20x64)-00D4E5?style=for-the-badge&logo=windows&logoColor=071318)](https://github.com/didrarayyan/Voxa-Studio/releases/latest/download/Voxa-Studio-Setup.exe)
 &nbsp;
-[![Browse Releases](https://img.shields.io/badge/All%20Releases-v1.0.0-1C202B?style=for-the-badge&logo=github)](https://github.com/didrarayyan/Voxa-Studio/releases/latest)
+[![Browse Releases](https://img.shields.io/badge/All%20Releases-v1.1.0-1C202B?style=for-the-badge&logo=github)](https://github.com/didrarayyan/Voxa-Studio/releases/latest)
 
 </div>
 
@@ -152,15 +167,16 @@ Click **Guide** in the top header anytime to summon the compact **Quick Guide �
 3. Click **Install Voxa Studio**. The installer automatically:
    - Extracts `Voxa-Studio.exe`, backend worker, icon, and license files
    - Detects Python `3.10–3.12` (or silently installs Python 3.11 via `winget` if missing)
-   - Creates an isolated `.venv` and installs `PyTorch`, `ONNX Runtime`, `KittenTTS`, and `en_core_web_sm`
+   - Creates an isolated `.venv` and installs `PyTorch`, `ONNX Runtime`, `KittenTTS`, `kokoro-onnx`, `ebooklib`, `beautifulsoup4`, `pymupdf`, and `en_core_web_sm`
    - Adds Desktop / Start Menu shortcuts and registers a clean uninstaller in Windows **Installed Apps**
-4. Launch **Voxa Studio** — your selected voice model downloads automatically from Hugging Face on first run and caches locally for offline use.
+4. Launch **Voxa Studio** — your selected voice model downloads automatically on first run and caches locally for offline use.
 
 ### CPU Performance Tips
 
 | Use Case | Recommended Model | Why |
 | :--- | :--- | :--- |
 | Fast everyday narration | `Kitten-TTS-2 Nano` (`int8`) | Synthesizes faster than real time on CPU (`~850 MB–1.38 GB` total process commit). |
+| Books, 54 voices & blending | `Kokoro-82M (v1.0 ONNX)` (`int8`) | Ultra-low `~300 MB` RAM, crisp 24 kHz audio across 9 languages, dual-voice blending & EPUB/PDF chapters. |
 | Lowest disk & RAM | `Kitten-TTS-2 Pico` (`int4`) | Tiny 4 MB weights, ideal for quick read-aloud. |
 | Rich 16-language speech | `Kitten-TTS-2 Mini` (`int8`) | Covers Japanese, Korean, Swedish, Turkish, European & South Asian languages. |
 | Voice cloning & neural tags | `Kitten-TTS-2 (1.7B Studio)` | Keep `emb4` + `student_w4` + `CPU` unless your GPU has >= 6 GB VRAM; typing the short reference transcript skips loading Whisper. |
@@ -171,6 +187,7 @@ Click **Guide** in the top header anytime to summon the compact **Quick Guide �
 
 | Model | Repo ID | Params | Disk Weights | Typical RAM Footprint | Capabilities |
 | :--- | :--- | :---: | :--- | :--- | :--- |
+| **Kokoro-82M (v1.0 ONNX)** | `kokoro-tts/kokoro-v1.0` | `82M` | `88 MB` (`int8`) – `310 MB` (`fp32`) + `26.9 MB` voices | `~300 MB` RAM | 9 languages (`en-us, en-gb, ja, cmn, es, fr-fr, it, hi, pt-br`) · 54 voices, Dual-Voice Blending, EPUB/PDF chapter reader |
 | **Kitten-TTS-2 Nano** | `KittenML/kitten-tts-2-nano` | `17M / lang` | `8.8 MB` (`int4`) – `17 MB` (`int8`) | `~200 MB` model (`~0.85–1.38 GB` process commit) | 8 languages (`en, de, es, it, pt, ru, hi, fr`), speed control, DSP expression & event cues |
 | **Kitten-TTS-2 Pico** | `KittenML/kitten-tts-2-pico` | `7M / lang` | `4 MB` (`int4`) – `8 MB` (`int8`) | `~160 MB` model | Ultra-fast 8-language CPU synthesis |
 | **Kitten-TTS-2 Mini** | `KittenML/kitten-tts-2-mini` | `82M` | `47 MB` (`int4`) – `83 MB` (`int8`) | `~350 MB` model | 16 languages incl. `ja, ko, sv, tr` |
@@ -204,7 +221,7 @@ flowchart LR
     UI["Voxa-Studio.exe<br/>Rust (eframe / egui · rodio · cpal)"]
     IPC["Newline-Delimited JSON IPC<br/>stdin / stdout (CREATE_NO_WINDOW)"]
     Worker["voxa-studio/backend/worker.py<br/>Persistent Synthesis Sidecar"]
-    Engines["Speech Backends<br/>ONNX Runtime · PyTorch · S3Codec · Whisper"]
+    Engines["Speech Backends<br/>ONNX Runtime · Kokoro-82M · PyTorch · S3Codec · Whisper"]
 
     UI -- "load_model / generate / transcribe / free_memory" --> IPC
     IPC --> Worker
@@ -310,4 +327,5 @@ Copy-Item .\target\release\voxa-setup.exe ..\Voxa-Studio-Setup.exe -Force
 ## Acknowledgements & License
 
 - Built on top of [**KittenML/KittenTTS**](https://github.com/KittenML/KittenTTS) and upstream speech/vocoder components licensed under **Apache-2.0**.
+- Integrates **Kokoro-82M** ONNX voice & blending support inspired by [**nazdridoy/kokoro-tts**](https://github.com/nazdridoy/kokoro-tts) (`MIT`) and powered by [**thewh1teagle/kokoro-onnx**](https://github.com/thewh1teagle/kokoro-onnx) (`MIT`).
 - Released under the **Apache License 2.0** — see [`LICENSE`](LICENSE) for full terms.
