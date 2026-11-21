@@ -20,7 +20,8 @@
 
 <p>
   <a href="#highlights">Highlights</a> •
-  <a href="#quick-start">Quick Start</a> •
+  <a href="#interface-walkthrough--page-by-page-guide">Screenshots &amp; Guide</a> •
+  <a href="#quick-start">Install &amp; Quick Start</a> •
   <a href="#supported-models">Supported Models</a> •
   <a href="#expression-markup">Expression Markup</a> •
   <a href="#architecture">Architecture</a> •
@@ -42,6 +43,7 @@
 
 ## Highlights
 
+- **One-Click Windows Setup (`Voxa-Studio-Setup.exe`)** — Pure-Rust Windows installer provisions `.venv`, installs neural backends without requiring Git, and creates Desktop & Start Menu shortcuts.
 - **Native Dark & Light Studio UI** — High-contrast obsidian and electric-cyan dark studio palette alongside a crisp slate light mode with persisted user settings (`studio_data/config.json`).
 - **Speak Studio** — Searchable multi-language voice browser with Favorites (`★`), voice personality notes, one-click **Sample** previews, **Story Starters**, and `.txt` / `.md` file drag-and-drop.
 - **Color-Coded Expression Markup & Hover Inspector** — Highlights `[emotion]`, `<event>`, and `(((emphasis)))` tags inline inside the script editor, shows contextual tooltips on hover, and includes an interactive **Tags Guide**. Tags steer vocal delivery and are never read aloud as words.
@@ -52,19 +54,113 @@
 
 ---
 
+## Interface Walkthrough & Page-by-Page Guide
+
+### 1. Speak Studio — Main Narration Workspace (Dark & Light Modes)
+
+<p align="center">
+  <img src="assets/screenshots/01-speak-studio-dark.png" alt="Voxa Studio Speak Studio in Dark Mode" width="100%">
+</p>
+
+The workspace is structured into five non-overlapping studio zones:
+
+1. **Top Studio Header Bar** — Switch between **Speak Studio**, **Voice Clone**, and **Models & Engine** on the left; on the right, inspect the active engine pill (`kitten-tts-2 · emb4`), toggle **Light / Dark** mode, release transient host memory with **Free RAM**, open **Guide**, or **Export** rendered audio.
+2. **Left Voice Pool** — Filter voices by language, search by voice name or vocal character, click the star icon (`★`) to pin **Favorites**, click **Sample** for a quick voice preview, or click a voice card to select it.
+3. **Center Script Canvas** — Write narration directly, load curated **Story Starters**, or drag-and-drop `.txt` / `.md` files. Expression tags (`[joyful]`, `<laugh>`, `(((amazing)))`) render in distinct colors right inside the editor with instant hover tooltips. Press **`Ctrl+Enter`** (or click **Generate Speech**) to synthesize.
+4. **Right Inspector & Recent Takes** — Choose Delivery Mode (**Stable**, **Expressive**, or **Custom Sampling**), toggle **Expand numbers & dates**, **Stream chunks live**, and **Auto-play generated**, preview spoken normalization/phonemes, tune **Advanced LM Knobs**, or replay clips from **Recent Takes**.
+5. **Bottom Audio Timeline Dock** — Press **`Space`** or click Play/Pause/Stop/Replay, click or drag anywhere on the time-ruled waveform clip to scrub, adjust playback **Vol**, and save as **`WAV`**, **`MP3`**, **`FLAC`**, or **`OGG`**.
+
+<details>
+<summary><strong>Preview Light Studio Mode</strong> — crisp daylight contrast with persisted theme state</summary>
+<br>
+<p align="center">
+  <img src="assets/screenshots/02-speak-studio-light.png" alt="Voxa Studio Speak Studio in Light Mode" width="100%">
+</p>
+</details>
+
+---
+
+### 2. Expression & Voice Tags Guide
+
+<p align="center">
+  <img src="assets/screenshots/03-tags-guide.png" alt="Voxa Studio Expression and Voice Tags Guide" width="100%">
+</p>
+
+Click **Tags Guide** above the Script editor (or **Open Full Tags Guide** below it) to browse every supported tag without leaving your script:
+
+1. **Emotion Tone Tags (`[tag]`)** — Place at the start of a script or sentence (`[joyful]`, `[tender]`, `[contemplative]`, `[excited]`, `[stern]`, `[angry]`, etc., plus natural aliases like `[happy]`, `[whisper]`, `[calm]`) to steer delivery tone.
+2. **Vocal Event Cues (`<tag>`)** — Insert inline (`<laugh>`, `<giggle>`, `<sigh>`, `<gasp>`, `<pause>`, `<um>`, `<scoff>`, `<sob>`, `<gulp>`, `<growl>`) to synthesize realistic breaths, laughs, and pauses without speaking the word aloud.
+3. **Emphasis (`(((phrase)))`)** — Wrap 1–4 words in triple parentheses to add vocal stress and pitch inflection.
+4. **One-Click Insertion & Inline Hover Inspection** — Click **Use in Script** on any row in the guide to insert/apply it, or hover directly over any colored tag inside the editor to inspect its exact behavior.
+
+---
+
+### 3. Voice Clone Studio
+
+<p align="center">
+  <img src="assets/screenshots/04-voice-clone.png" alt="Voxa Studio Zero-Shot Voice Clone Workspace" width="100%">
+</p>
+
+Switch to the **Voice Clone** tab to clone any speaking style in seconds:
+
+1. **Supply a 5–30s Reference Clip** — Drag-and-drop or browse a `.wav`, `.mp3`, `.flac`, or `.ogg` file under **Upload File**, or switch to **Record Mic** to capture directly with the live peak level meter.
+2. **Enter or Auto-Transcribe Reference Text** — Typing the exact words spoken in the short reference clip gives fast, accurate alignment on CPU; leaving it blank runs Whisper auto-transcription (and automatically unloads Whisper right afterward to save RAM). Keep **Include clip audio tokens in prompt** checked for higher timbre fidelity.
+3. **Save Reusable Voice Profiles** — Name your clip in the left **Voice Profiles** sidebar and click **Save Current Clip as Profile** to recall that cloned speaker anytime with one click.
+4. **Write Your Script & Generate** — Enter your script (with optional `[emotion]` / `<event>` / `(((emphasis)))` markup) and click **Generate Speech** (`Ctrl+Enter`). *Note: Voice Cloning runs on **Kitten-TTS-2 (1.7B Studio)**; if a Tiny ONNX model is currently active, click the prompt card button to load 1.7B automatically.*
+
+---
+
+### 4. Models & Engine Manager
+
+<p align="center">
+  <img src="assets/screenshots/05-models-engine.png" alt="Voxa Studio Models and Engine Manager" width="100%">
+</p>
+
+Open **Models & Engine** (or click the green active-engine pill in the top header) to switch speech engines and monitor downloads:
+
+1. **Currently Loaded Engine & `Free RAM`** — Displays the active repo ID, sample rate (`24000 Hz`), backend (`onnx` / `torch`), device (`cpu` / `cuda`), weights, decoder, voice count, and a **Free RAM** control that releases transient helpers and trims unused working-set memory.
+2. **Fast Everyday Voices vs. Full 1.7B Studio** — Click **Activate** on **Kitten-TTS-2 Nano / Pico / Mini** for sub-second CPU read-aloud (`~160–350 MB` model footprint), or select **Kitten-TTS-2 (1.7B Studio)** for 115 built-in voices, zero-shot voice cloning, and native neural expressions.
+3. **Live Download Telemetry & Cancellation** — First-time downloads show real-time progress bar, transferred bytes, live speed (`MB/s`), ETA, and a **Cancel Download** button that aborts safely and restores the previous working engine.
+4. **Engine Settings & Copyable Activity Log** — Configure quantization (`int4` / `int8`, `emb4` / `packed` / `full`), decoder (`student_w4` / `default`), CPU/CUDA device, CPU threads, custom Hugging Face repo paths, and inspect or copy diagnostics from **Engine Activity Log**.
+
+---
+
+### 5. In-App Quick Guide
+
+<p align="center">
+  <img src="assets/screenshots/06-quick-guide.png" alt="Voxa Studio In-App Quick Guide" width="100%">
+</p>
+
+Click **Guide** in the top header anytime to summon the compact **Quick Guide — Voxa Studio** overlay with essential shortcuts (`Ctrl+Enter`, `Space`) and CPU cloning tips.
+
+---
+
 ## Quick Start
 
-### Launch Desktop App
+### Option A — Windows Setup Wizard (Recommended)
 
-1. Double-click **`Voxa-Studio.exe`** at the repository root — zero console window opens.
-2. On first run, the active engine downloads from Hugging Face and caches locally for offline reuse.
-3. Choose a voice in **Speak Studio**, type or drop your script, and press **`Ctrl+Enter`** (or click **Generate Speech**).
+<div align="center">
+
+[![Download Voxa-Studio-Setup.exe](https://img.shields.io/badge/Download-Voxa--Studio--Setup.exe%20(Windows%20x64)-00D4E5?style=for-the-badge&logo=windows&logoColor=071318)](https://github.com/didrarayyan/Voxa-Studio/releases/latest/download/Voxa-Studio-Setup.exe)
+&nbsp;
+[![Browse Releases](https://img.shields.io/badge/All%20Releases-v1.0.0-1C202B?style=for-the-badge&logo=github)](https://github.com/didrarayyan/Voxa-Studio/releases/latest)
+
+</div>
+
+1. Download and run **`Voxa-Studio-Setup.exe`** from the [**Latest GitHub Release**](https://github.com/didrarayyan/Voxa-Studio/releases/latest).
+2. Choose an install folder (defaults to `%LOCALAPPDATA%\VoxaStudio` — **no Administrator rights or Git required**).
+3. Click **Install Voxa Studio**. The installer automatically:
+   - Extracts `Voxa-Studio.exe`, backend worker, icon, and license files
+   - Detects Python `3.10–3.12` (or silently installs Python 3.11 via `winget` if missing)
+   - Creates an isolated `.venv` and installs `PyTorch`, `ONNX Runtime`, `KittenTTS`, and `en_core_web_sm`
+   - Adds Desktop / Start Menu shortcuts and registers a clean uninstaller in Windows **Installed Apps**
+4. Launch **Voxa Studio** — your selected voice model downloads automatically from Hugging Face on first run and caches locally for offline use.
 
 ### CPU Performance Tips
 
 | Use Case | Recommended Model | Why |
 | :--- | :--- | :--- |
-| Fast everyday narration | `Kitten-TTS-2 Nano` (`int8`) | Synthesizes faster than real time on CPU (~850 MB–1.38 GB total process commit). |
+| Fast everyday narration | `Kitten-TTS-2 Nano` (`int8`) | Synthesizes faster than real time on CPU (`~850 MB–1.38 GB` total process commit). |
 | Lowest disk & RAM | `Kitten-TTS-2 Pico` (`int4`) | Tiny 4 MB weights, ideal for quick read-aloud. |
 | Rich 16-language speech | `Kitten-TTS-2 Mini` (`int8`) | Covers Japanese, Korean, Swedish, Turkish, European & South Asian languages. |
 | Voice cloning & neural tags | `Kitten-TTS-2 (1.7B Studio)` | Keep `emb4` + `student_w4` + `CPU` unless your GPU has >= 6 GB VRAM; typing the short reference transcript skips loading Whisper. |
@@ -136,19 +232,23 @@ Large 1.7B models can easily spike host RAM past `10–11 GB` under naïve CPU l
 
 ```text
 Voxa-Studio/
-├── Voxa-Studio.exe            # Prebuilt native Windows release binary (not tracked in git)
-├── assets/                    # Master brand vector logos, raster icons & hero banner
+├── .github/workflows/
+│   └── release.yml            # Builds & publishes Voxa-Studio-Setup.exe on v* tags
+├── assets/
+│   ├── screenshots/           # Page-by-page UI walkthrough PNG screenshots
+│   └── *.svg, *.png           # Master brand vector logos, raster icons & hero banner
 ├── docs/
 │   └── BRAND.md               # Brand identity, color palette & asset guidelines
-├── voxa-studio/               # Rust desktop application & Python synthesis sidecar
-│   ├── build.rs               # Compiles Windows ICO & VERSIONINFO via windres
-│   ├── Cargo.toml             # Binary crate config (voxa-studio v1.0.0)
-│   ├── assets/                # Embedded app icon (.png, .ico) & Win32 resource (.rc)
-│   ├── src/                   # main.rs, app.rs, theme.rs, protocol.rs, worker.rs, audio.rs, recorder.rs, state.rs
+├── voxa-studio/               # Rust desktop application, installer & Python sidecar
+│   ├── build.rs               # Compiles Windows ICO & VERSIONINFO resources
+│   ├── Cargo.toml             # Binary crate config (voxa-studio + optional voxa-setup)
+│   ├── assets/                # Embedded icons (.png, .ico) & Win32 resources (app.rc, setup.rc)
+│   ├── src/
+│   │   ├── main.rs            # Voxa Studio GUI entry point
+│   │   ├── setup.rs           # Standalone Voxa-Studio-Setup.exe Windows installer wizard
+│   │   └── ...                # app.rs, theme.rs, protocol.rs, worker.rs, audio.rs, recorder.rs, state.rs
 │   └── backend/
 │       └── worker.py          # JSON-lines sidecar, DSP engine & memory manager
-├── .venv/                     # Local Python 3.11 runtime (not tracked)
-├── studio_data/               # Persisted app config, history, outputs & saved voice profiles
 ├── .gitignore
 ├── requirements.txt           # Installs upstream kittenml synthesis engine via pip
 ├── LICENSE
@@ -161,10 +261,10 @@ Voxa-Studio/
 
 ### Prerequisites
 
-- **Rust** toolchain (`1.80+`, tested with `rustc 1.100.0 x86_64-pc-windows-gnu`) and `windres` (included with LLVM-MinGW)
-- **Python 3.11** (for the synthesis sidecar `.venv\`)
+- **Rust** toolchain (`1.80+`, tested with `rustc 1.100.0 x86_64-pc-windows-gnu` and MSVC in GitHub Actions)
+- **Python 3.10–3.12** (for the synthesis sidecar `.venv\`)
 
-### Clone, Test & Release Build
+### Clone, Test & Build App + Setup Installer
 
 ```powershell
 git clone https://github.com/didrarayyan/Voxa-Studio.git
@@ -175,11 +275,16 @@ python -m venv .venv
 .\.venv\Scripts\pip.exe install -r requirements.txt
 .\.venv\Scripts\python.exe -m spacy download en_core_web_sm
 
-# Run Rust tests & build release executable
+# Build Voxa-Studio.exe & optional Voxa-Studio-Setup.exe
 cd voxa-studio
 cargo test
-cargo build --release
+cargo build --release --bin voxa-studio
 Copy-Item .\target\release\voxa-studio.exe ..\Voxa-Studio.exe -Force
+
+# Optional: bundle everything into a standalone Windows Setup wizard
+cargo test --bin voxa-setup --features installer
+cargo build --release --bin voxa-setup --features installer
+Copy-Item .\target\release\voxa-setup.exe ..\Voxa-Studio-Setup.exe -Force
 ```
 
 <details>

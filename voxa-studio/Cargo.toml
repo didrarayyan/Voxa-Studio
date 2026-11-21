@@ -5,9 +5,17 @@ edition = "2021"
 description = "Voxa Studio — Local-first neural voice, expression, and zero-shot cloning studio"
 license = "Apache-2.0"
 
+[features]
+installer = []
+
 [[bin]]
 name = "voxa-studio"
 path = "src/main.rs"
+
+[[bin]]
+name = "voxa-setup"
+path = "src/setup.rs"
+required-features = ["installer"]
 
 [dependencies]
 eframe = { version = "0.31", default-features = true }
