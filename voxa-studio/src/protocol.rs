@@ -18,6 +18,7 @@ pub struct ModelCatalogEntry {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModelCategory {
     TinyCpu,
+    KokoroOnnx,
     StudioLm,
     LegacyOnnx,
 }
@@ -54,6 +55,17 @@ pub const MODEL_CATALOG: &[ModelCatalogEntry] = &[
         languages_summary: "16 languages including Japanese, Korean, Swedish, Turkish",
         badge: "16 Languages",
         description: "Single rich multilingual model supporting 16 languages and expressive prosody.",
+        default_weights: Some("int8"),
+    },
+    ModelCatalogEntry {
+        repo_id: "kokoro-tts/kokoro-v1.0",
+        display_name: "Kokoro-82M (v1.0 ONNX)",
+        category: ModelCategory::KokoroOnnx,
+        params: "82M",
+        size_summary: "88 MB (int8) - 310 MB (fp32) · ~300 MB RAM",
+        languages_summary: "9 languages (US/UK EN, JA, ZH, ES, FR, IT, HI, PT) · 54 voices",
+        badge: "Voice Blending",
+        description: "Crisp 24 kHz studio voices with custom dual-voice blending & fast audiobook / EPUB / PDF synthesis.",
         default_weights: Some("int8"),
     },
     ModelCatalogEntry {
@@ -142,17 +154,22 @@ pub const VOCAL_EVENT_TAGS: &[(&str, &str)] = &[
 pub fn language_display_name(code: &str) -> String {
     match code {
         "en" => "English (en)".to_string(),
+        "en-us" => "English (US)".to_string(),
+        "en-gb" => "English (UK)".to_string(),
         "de" => "German (de)".to_string(),
         "es" => "Spanish (es)".to_string(),
         "fr" => "French (fr)".to_string(),
+        "fr-fr" => "French (fr-fr)".to_string(),
         "it" => "Italian (it)".to_string(),
         "pt" => "Portuguese (pt)".to_string(),
+        "pt-br" => "Portuguese (Brazil)".to_string(),
         "ru" => "Russian (ru)".to_string(),
         "hi" => "Hindi (hi)".to_string(),
         "da" => "Danish (da)".to_string(),
         "fi" => "Finnish (fi)".to_string(),
         "ja" => "Japanese (ja)".to_string(),
         "ko" => "Korean (ko)".to_string(),
+        "cmn" => "Chinese (Mandarin)".to_string(),
         "nl" => "Dutch (nl)".to_string(),
         "sv" => "Swedish (sv)".to_string(),
         "sw" => "Swahili (sw)".to_string(),
@@ -163,16 +180,18 @@ pub fn language_display_name(code: &str) -> String {
 
 pub fn sample_text_for_language(lang: &str) -> &'static str {
     match lang {
-        "en" | "English" => "Hello! Welcome to Voxa Studio. Let's bring your script to life.",
+        "en" | "en-us" | "en-gb" | "English" => {
+            "Hello! Welcome to Voxa Studio. Let's bring your script to life."
+        }
         "de" | "German" => "Guten Morgen! Ich wünsche dir einen wunderschönen Tag.",
         "es" | "Spanish" => "Buenos días. Espero que tengas un día maravilloso.",
-        "fr" | "French" => "Bonjour. Je te souhaite une excellente journée.",
+        "fr" | "fr-fr" | "French" => "Bonjour. Je te souhaite une excellente journée.",
         "it" | "Italian" => "Buongiorno. Ti auguro una splendida giornata.",
-        "pt" | "Portuguese" => "Bom dia. Desejo-lhe um dia maravilhoso.",
+        "pt" | "pt-br" | "Portuguese" => "Bom dia. Desejo-lhe um dia maravilhoso.",
         "ru" | "Russian" => "Доброе утро. Желаю тебе прекрасного дня.",
         "hi" | "Hindi" => "सुप्रभात। आपका दिन शुभ हो।",
         "ar" | "Arabic" => "صباح الخير. أتمنى لك يوماً رائعاً.",
-        "zh" | "Chinese" => "早上好。祝你度过美好的一天。",
+        "zh" | "cmn" | "Chinese" => "早上好。祝你度过美好的一天。",
         "nl" | "Dutch" => "Goedemorgen. Ik wens je een fijne dag.",
         "id" | "Indonesian" => "Selamat pagi. Semoga harimu menyenangkan.",
         "ja" | "Japanese" => "おはようございます。素敵な一日をお過ごしください。",
@@ -227,6 +246,16 @@ pub fn builtin_voice_description(name: &str) -> Option<&'static str> {
         "Martha" => Some("Weathered radio journalist, female"),
         "Sable" => Some("Hushed conspirator, female"),
         "Victoria" => Some("Regal narrator, female"),
+        "af_heart" => Some("Kokoro signature warm expressive female (US)"),
+        "af_bella" => Some("Kokoro smooth expressive female (US)"),
+        "af_sarah" => Some("Kokoro clear conversational female (US)"),
+        "af_nova" => Some("Kokoro bright articulate female (US)"),
+        "af_sky" => Some("Kokoro light airy female (US)"),
+        "am_adam" => Some("Kokoro deep resonant male narrator (US)"),
+        "am_michael" => Some("Kokoro warm steady male (US)"),
+        "am_fenrir" => Some("Kokoro bold dramatic male (US)"),
+        "bf_emma" => Some("Kokoro crisp British female (UK)"),
+        "bm_george" => Some("Kokoro classic British male (UK)"),
         _ => None,
     }
 }
@@ -588,13 +617,23 @@ pub enum WorkerRequest {
     FreeMemory {
         unload_model: bool,
     },
+    ExtractDocument {
+        path: String,
+    },
     Shutdown,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct VoiceBlend {
+    pub second_voice: String,
+    pub primary_weight: f32,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct GenerateRequest {
     pub text: String,
     pub voice: Option<String>,
+    pub voice_blend: Option<VoiceBlend>,
     pub language: Option<String>,
     pub reference: Option<String>,
     pub reference_text: Option<String>,
@@ -673,6 +712,8 @@ pub struct ModelInfo {
     #[serde(default)]
     pub supports_voice_sample: bool,
     #[serde(default)]
+    pub supports_voice_blending: bool,
+    #[serde(default)]
     pub available_decoders: Vec<String>,
     #[serde(default)]
     pub available_weights: Vec<String>,
@@ -684,6 +725,14 @@ pub struct ModelInfo {
     pub advanced_options: BTreeMap<String, serde_json::Value>,
     #[serde(default)]
     pub use_reference_prompt_default: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct DocumentChapter {
+    pub title: String,
+    pub text: String,
+    #[serde(default)]
+    pub char_count: usize,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -769,6 +818,11 @@ pub enum WorkerEvent {
     MemoryFreed {
         unloaded: bool,
         ram_mb: f32,
+    },
+    DocumentExtracted {
+        title: String,
+        path: String,
+        chapters: Vec<DocumentChapter>,
     },
     Error {
         message: String,

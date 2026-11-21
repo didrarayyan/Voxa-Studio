@@ -245,6 +245,13 @@ def _unload_transient_helpers(model: object) -> None:
         inner = getattr(encoder, "_inner", encoder)
         if hasattr(inner, "_model"):
             inner._model = None
+    voices_npz = getattr(model, "voices", None)
+    close_fn = getattr(voices_npz, "close", None)
+    if callable(close_fn) and detect_family(model) == "kokoro":
+        try:
+            close_fn()
+        except Exception:
+            pass
 
 
 def _release_memory(trim_working_set: bool = True, clear_all_caches: bool = False) -> None:
@@ -822,8 +829,185 @@ def infer_kitten2_voice_language(voice_name: str) -> str:
     return "English"
 
 
+KOKORO_MODEL_ID = "kokoro-tts/kokoro-v1.0"
+KOKORO_WEIGHT_FILES = {
+    "int8": "kokoro-v1.0.int8.onnx",
+    "fp16": "kokoro-v1.0.fp16.onnx",
+    "fp32": "kokoro-v1.0.onnx",
+}
+KOKORO_VOICES_FILENAME = "voices-v1.0.bin"
+KOKORO_RELEASE_BASES = (
+    "https://github.com/nazdridoy/kokoro-tts/releases/download/v1.0.0",
+    "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0",
+)
+KOKORO_VOICES_URLS = (
+    "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin",
+    "https://github.com/nazdridoy/kokoro-tts/releases/download/v1.0.0/voices-v1.0.bin",
+)
+
+_KOKORO_PREFIX_INFO = {
+    "af": ("en-us", "US English · Female"),
+    "am": ("en-us", "US English · Male"),
+    "bf": ("en-gb", "British English · Female"),
+    "bm": ("en-gb", "British English · Male"),
+    "ef": ("es", "Spanish · Female"),
+    "em": ("es", "Spanish · Male"),
+    "ff": ("fr-fr", "French · Female"),
+    "fm": ("fr-fr", "French · Male"),
+    "hf": ("hi", "Hindi · Female"),
+    "hm": ("hi", "Hindi · Male"),
+    "if": ("it", "Italian · Female"),
+    "im": ("it", "Italian · Male"),
+    "jf": ("ja", "Japanese · Female"),
+    "jm": ("ja", "Japanese · Male"),
+    "pf": ("pt-br", "Portuguese · Female"),
+    "pm": ("pt-br", "Portuguese · Male"),
+    "zf": ("cmn", "Mandarin Chinese · Female"),
+    "zm": ("cmn", "Mandarin Chinese · Male"),
+}
+
+
+def _infer_kokoro_lang(voice_name: str) -> str:
+    prefix = str(voice_name or "").split("_", 1)[0].lower()
+    return _KOKORO_PREFIX_INFO.get(prefix, ("en-us", "English"))[0]
+
+
+def _describe_kokoro_voice(voice_name: str) -> str:
+    prefix = str(voice_name or "").split("_", 1)[0].lower()
+    return _KOKORO_PREFIX_INFO.get(prefix, ("en-us", "Kokoro neural voice"))[1]
+
+
+def _is_kokoro_target(model_name: str) -> bool:
+    norm = model_name.strip().lower()
+    if norm in ("kokoro-tts/kokoro-v1.0", "nazdridoy/kokoro-tts", "kokoro", "kokoro-v1.0"):
+        return True
+    p = Path(model_name)
+    if p.is_dir():
+        has_onnx = any(p.glob("kokoro*.onnx"))
+        has_voices = any(p.glob("voices*.bin"))
+        return has_onnx and has_voices
+    return False
+
+
+def _download_url_with_progress(urls: tuple[str, ...], dest_path: Path, display_name: str) -> Path:
+    if dest_path.is_file() and dest_path.stat().st_size > 1024:
+        return dest_path
+
+    import urllib.request
+
+    dest_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = dest_path.with_suffix(dest_path.suffix + ".part")
+    last_err: Exception | None = None
+
+    for url in urls:
+        try:
+            emit({"event": "status", "message": f"Downloading {display_name} from {url}..."})
+            req = urllib.request.Request(url, headers={"User-Agent": "VoxaStudio/1.1"})
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                total = int(resp.headers.get("Content-Length") or 0)
+                downloaded = 0
+                start_t = time.monotonic()
+                last_emit_t = 0.0
+                last_bytes = 0
+                ema_speed = 0.0
+
+                with open(tmp_path, "wb") as out_f:
+                    while True:
+                        chunk = resp.read(65536)
+                        if not chunk:
+                            break
+                        out_f.write(chunk)
+                        downloaded += len(chunk)
+                        now = time.monotonic()
+                        done = total > 0 and downloaded >= total
+                        if done or (now - last_emit_t) >= 0.10:
+                            dt = max(1e-3, now - (last_emit_t or start_t))
+                            inst = max(0, downloaded - last_bytes) / dt
+                            ema_speed = inst if ema_speed <= 0.0 else (0.35 * inst + 0.65 * ema_speed)
+                            last_emit_t = now
+                            last_bytes = downloaded
+                            eta_s = ((total - downloaded) / ema_speed) if (total > downloaded and ema_speed > 1.0) else None
+                            emit({
+                                "event": "download_progress",
+                                "file_name": display_name,
+                                "downloaded_bytes": downloaded,
+                                "total_bytes": total,
+                                "speed_bps": float(ema_speed),
+                                "eta_s": float(eta_s) if eta_s is not None else None,
+                            })
+            os.replace(tmp_path, dest_path)
+            return dest_path
+        except Exception as exc:
+            last_err = exc
+            if tmp_path.exists():
+                try:
+                    tmp_path.unlink()
+                except Exception:
+                    pass
+
+    raise RuntimeError(f"Failed downloading {display_name}: {last_err}")
+
+
+def _load_kokoro_model(
+    model_name: str,
+    cache_dir: str | None,
+    weights: str | None,
+    device: str | None,
+    threads: int | None,
+):
+    from kokoro_onnx import Kokoro
+    from kokoro_onnx.session import resolve_providers
+    import onnxruntime as rt
+
+    w_key = (weights or "int8").lower()
+    if w_key not in KOKORO_WEIGHT_FILES:
+        w_key = "int8"
+
+    local_dir = Path(model_name)
+    if local_dir.is_dir():
+        onnx_candidates = sorted(local_dir.glob("kokoro*.onnx"))
+        voices_candidates = sorted(local_dir.glob("voices*.bin"))
+        if not onnx_candidates or not voices_candidates:
+            raise FileNotFoundError(f"Expected kokoro*.onnx and voices*.bin inside {local_dir}")
+        preferred = local_dir / KOKORO_WEIGHT_FILES[w_key]
+        onnx_path = preferred if preferred.is_file() else onnx_candidates[0]
+        voices_path = voices_candidates[0]
+    else:
+        base_cache = Path(cache_dir) if cache_dir else (Path.home() / ".cache" / "voxa-studio" / "kokoro-v1.0")
+        onnx_filename = KOKORO_WEIGHT_FILES[w_key]
+        onnx_urls = tuple(f"{base}/{onnx_filename}" for base in KOKORO_RELEASE_BASES)
+        onnx_path = _download_url_with_progress(onnx_urls, base_cache / onnx_filename, onnx_filename)
+        voices_path = _download_url_with_progress(
+            KOKORO_VOICES_URLS, base_cache / KOKORO_VOICES_FILENAME, KOKORO_VOICES_FILENAME
+        )
+
+    sess_opts = rt.SessionOptions()
+    sess_opts.intra_op_num_threads = max(1, min(8, int(threads) if threads else min(4, os.cpu_count() or 4)))
+
+    avail = rt.get_available_providers()
+    if device == "cpu":
+        providers = ["CPUExecutionProvider"]
+    elif device == "cuda" and "CUDAExecutionProvider" in avail:
+        providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+    elif device == "amd_gpu" and "DmlExecutionProvider" in avail:
+        providers = ["DmlExecutionProvider", "CPUExecutionProvider"]
+    else:
+        providers = resolve_providers()
+
+    session = rt.InferenceSession(str(onnx_path), sess_options=sess_opts, providers=providers)
+    session._model_path = str(onnx_path)
+    model = Kokoro.from_session(session, str(voices_path))
+    model._voxa_weights = w_key
+    model._voxa_device = "cuda" if "CUDAExecutionProvider" in session.get_providers() else (
+        "dml" if "DmlExecutionProvider" in session.get_providers() else "cpu"
+    )
+    return model
+
+
 def detect_family(model) -> str:
     cls_name = type(model).__name__
+    if cls_name == "Kokoro":
+        return "kokoro"
     if cls_name == "KittenTTS2":
         return "kitten2"
     if cls_name == "KittenTTS2Tiny":
@@ -911,6 +1095,57 @@ def build_model_info(model, model_name: str, weights: str | None, decoder: str |
             "supports_voice_sample": False,
             "available_decoders": [],
             "available_weights": list(getattr(model, "onnx_weights", ["int8", "int4"])),
+            "decode_presets": {},
+            "default_preset": None,
+            "advanced_options": {},
+            "use_reference_prompt_default": False,
+        }
+
+    if family == "kokoro":
+        voice_names = list(model.get_voices())
+        langs_seen = []
+        voices = []
+        for vname in voice_names:
+            lang = _infer_kokoro_lang(vname)
+            if lang not in langs_seen:
+                langs_seen.append(lang)
+            voices.append({
+                "name": vname,
+                "language": lang,
+                "description": _describe_kokoro_voice(vname),
+                "key": vname,
+                "has_reference": False,
+                "transcript": "",
+            })
+        lang_order = ["en-us", "en-gb", "ja", "cmn", "es", "fr-fr", "it", "hi", "pt-br"]
+        ordered_langs = [l for l in lang_order if l in langs_seen] + [
+            l for l in sorted(langs_seen) if l not in lang_order
+        ]
+        default_voice = (
+            "af_heart" if "af_heart" in voice_names
+            else ("af_sarah" if "af_sarah" in voice_names else (voice_names[0] if voice_names else None))
+        )
+        return {
+            "model_name": model_name,
+            "family": family,
+            "backend": "onnx",
+            "device": getattr(model, "_voxa_device", "cpu"),
+            "weights": getattr(model, "_voxa_weights", weights or "int8"),
+            "decoder": None,
+            "sample_rate": 24000,
+            "languages": ordered_langs,
+            "default_language": "en-us" if "en-us" in ordered_langs else (ordered_langs[0] if ordered_langs else None),
+            "default_voice": default_voice,
+            "voices": voices,
+            "supports_cloning": False,
+            "supports_expression": False,
+            "supports_speed": True,
+            "supports_phonemize": False,
+            "supports_normalize": True,
+            "supports_voice_sample": False,
+            "supports_voice_blending": True,
+            "available_decoders": [],
+            "available_weights": ["int8", "fp16", "fp32"],
             "decode_presets": {},
             "default_preset": None,
             "advanced_options": {},
@@ -1014,8 +1249,11 @@ def handle_load_model(req: dict) -> None:
     threads = req.get("threads")
 
     emit({"event": "status", "message": f"Checking {model_name}..."})
-    _, _, config = resolve_repo(model_name, cache_dir=cache_dir)
-    model_type = config.get("type")
+    is_kokoro = _is_kokoro_target(model_name)
+    model_type = None
+    if not is_kokoro:
+        _, _, config = resolve_repo(model_name, cache_dir=cache_dir)
+        model_type = config.get("type")
 
     # Free previously loaded model cleanly before allocating the next one.
     if CURRENT_MODEL is not None:
@@ -1034,7 +1272,9 @@ def handle_load_model(req: dict) -> None:
         pass
 
     emit({"event": "status", "message": f"Downloading & loading {model_name}..."})
-    if model_type == KITTEN2_TYPE:
+    if is_kokoro:
+        model = _load_kokoro_model(model_name, cache_dir, weights, device, threads)
+    elif model_type == KITTEN2_TYPE:
         _install_low_ram_kittentts2_loader()
         model = KittenTTS(
             model_name,
@@ -1158,6 +1398,101 @@ def _generate_expressive_sequence(
         raise RuntimeError("No audio was generated for the given text.")
     audio = join_expressive_segments(joined_segments, sample_rate)
     return audio, max(1, emitted_chunks if stream else len(joined_segments))
+
+
+def _chunk_kokoro_text(text: str, max_chars: int = 380) -> list[str]:
+    """Split arbitrary long scripts or chapters cleanly on sentence/clause boundaries."""
+    cleaned = re.sub(r"\s+", " ", str(text or "")).strip()
+    if not cleaned:
+        return []
+    if len(cleaned) <= max_chars:
+        return [cleaned]
+
+    sentences = re.split(r"(?<=[.!?。！？])\s+", cleaned)
+    chunks: list[str] = []
+    cur: list[str] = []
+    cur_len = 0
+
+    for sent in sentences:
+        s = sent.strip()
+        if not s:
+            continue
+        if len(s) > max_chars:
+            if cur:
+                chunks.append(" ".join(cur))
+                cur, cur_len = [], 0
+            words = s.split(" ")
+            part: list[str] = []
+            part_len = 0
+            for w in words:
+                add = len(w) + (1 if part else 0)
+                if part and part_len + add > max_chars:
+                    chunks.append(" ".join(part))
+                    part, part_len = [w], len(w)
+                else:
+                    part.append(w)
+                    part_len += add
+            if part:
+                chunks.append(" ".join(part))
+            continue
+
+        add = len(s) + (1 if cur else 0)
+        if cur and cur_len + add > max_chars:
+            chunks.append(" ".join(cur))
+            cur, cur_len = [s], len(s)
+        else:
+            cur.append(s)
+            cur_len += add
+
+    if cur:
+        chunks.append(" ".join(cur))
+    return chunks
+
+
+def _resolve_kokoro_style_and_lang(model, voice_req: str | None, blend_req: dict | None, lang_req: str | None):
+    available = set(model.get_voices())
+    primary = (voice_req or "").strip()
+
+    # Support explicit voice blend object OR "voice1:60,voice2:40" / "voice1,voice2" syntax
+    if "," in primary:
+        parts = [p.strip() for p in primary.split(",") if p.strip()]
+        if len(parts) != 2:
+            raise ValueError("Voice blending accepts two comma-separated voices.")
+        parsed = []
+        weights = []
+        for p in parts:
+            if ":" in p:
+                v_name, w_str = p.split(":", 1)
+                parsed.append(v_name.strip())
+                weights.append(max(0.0, float(w_str.strip())))
+            else:
+                parsed.append(p)
+                weights.append(50.0)
+        total = sum(weights) or 100.0
+        w1 = float(weights[0] / total)
+        v1, v2 = parsed[0], parsed[1]
+        if v1 not in available or v2 not in available:
+            raise ValueError(f"Unknown Kokoro voice in blend: {v1}, {v2}")
+        style = (w1 * model.get_voice_style(v1) + (1.0 - w1) * model.get_voice_style(v2)).astype(np.float32)
+        resolved_lang = lang_req or _infer_kokoro_lang(v1)
+        return style, resolved_lang
+
+    if not primary:
+        primary = "af_heart" if "af_heart" in available else next(iter(model.get_voices()))
+    if primary not in available:
+        raise ValueError(f"Unknown Kokoro voice: {primary!r}")
+
+    if isinstance(blend_req, dict) and blend_req.get("second_voice"):
+        second = str(blend_req["second_voice"]).strip()
+        if second not in available:
+            raise ValueError(f"Unknown second Kokoro voice: {second!r}")
+        w1 = float(np.clip(float(blend_req.get("primary_weight", 0.5)), 0.05, 0.95))
+        style = (w1 * model.get_voice_style(primary) + (1.0 - w1) * model.get_voice_style(second)).astype(np.float32)
+    else:
+        style = primary
+
+    resolved_lang = lang_req or _infer_kokoro_lang(primary)
+    return style, resolved_lang
 
 
 def handle_generate(req: dict) -> None:
@@ -1290,6 +1625,72 @@ def handle_generate(req: dict) -> None:
                 chunks_count = len(wavs)
             else:
                 audio = CURRENT_MODEL.generate(text, voice=voice, language=language, speed=speed)
+                chunks_count = 1
+
+        elif family == "kokoro":
+            style_or_voice, kokoro_lang = _resolve_kokoro_style_and_lang(
+                CURRENT_MODEL,
+                req.get("voice"),
+                req.get("voice_blend"),
+                req.get("language") or None,
+            )
+            speed = float(np.clip(float(req.get("speed") or 1.0), 0.5, 2.0))
+
+            def _kokoro_synth(txt: str, spd: float) -> np.ndarray:
+                clamped_spd = float(np.clip(spd, 0.5, 2.0))
+                parts = _chunk_kokoro_text(txt, max_chars=380)
+                if not parts:
+                    return np.zeros(0, dtype=np.float32)
+                outs = []
+                for p_txt in parts:
+                    wav_p, _sr = CURRENT_MODEL.create(
+                        p_txt, voice=style_or_voice, speed=clamped_spd, lang=kokoro_lang
+                    )
+                    outs.append(np.asarray(wav_p, dtype=np.float32).reshape(-1))
+                return outs[0] if len(outs) == 1 else np.concatenate(outs)
+
+            items = parse_expressive_script(text)
+            has_expressive = (
+                len(items) > 1
+                or (len(items) == 1 and (items[0]["type"] != "speech" or items[0].get("emotion") is not None or items[0].get("emphasis")))
+            )
+            if has_expressive:
+                audio, chunks_count = _generate_expressive_sequence(
+                    items,
+                    speed,
+                    _kokoro_synth,
+                    sample_rate,
+                    output_wav,
+                    stream,
+                )
+            elif stream:
+                chunks = _chunk_kokoro_text(text, max_chars=380)
+                wavs = []
+                stem = str(Path(output_wav).with_suffix(""))
+                for idx, chunk_txt in enumerate(chunks):
+                    wav_c, _sr = CURRENT_MODEL.create(
+                        chunk_txt, voice=style_or_voice, speed=speed, lang=kokoro_lang
+                    )
+                    flat_chunk = np.asarray(wav_c, dtype=np.float32).reshape(-1)
+                    chunk_path = f"{stem}_chunk_{idx}.wav"
+                    write_wav_pcm16(chunk_path, flat_chunk, sample_rate)
+                    wavs.append(flat_chunk)
+                    emit({
+                        "event": "chunk",
+                        "index": idx,
+                        "wav_path": chunk_path,
+                        "duration_s": float(flat_chunk.size / sample_rate),
+                    })
+                if not wavs:
+                    raise RuntimeError("No audio was generated for the given text.")
+                gap = np.zeros(int(0.14 * sample_rate), dtype=np.float32)
+                joined = []
+                for w in wavs:
+                    joined.extend([w, gap])
+                audio = np.concatenate(joined[:-1])
+                chunks_count = len(wavs)
+            else:
+                audio = _kokoro_synth(text, speed)
                 chunks_count = 1
 
         else:
@@ -1435,6 +1836,14 @@ def handle_normalize(req: dict) -> None:
             "normalized": normalized,
             "spans": tag_spans,
         })
+    elif CURRENT_FAMILY == "kokoro":
+        spoken_preview, tag_spans = strip_tags_for_preview(text)
+        emit({
+            "event": "normalized",
+            "original": text,
+            "normalized": spoken_preview,
+            "spans": tag_spans,
+        })
     else:
         spoken_preview, tag_spans = strip_tags_for_preview(text)
         res = CURRENT_MODEL.normalize_text(spoken_preview, return_spans=True)
@@ -1533,6 +1942,150 @@ def handle_audio_info(req: dict) -> None:
         })
 
 
+def _extract_document_chapters(path: str) -> tuple[str, list[dict]]:
+    p = Path(path)
+    if not p.is_file():
+        raise FileNotFoundError(f"Document not found: {path}")
+    ext = p.suffix.lower()
+
+    if ext in (".txt", ".md"):
+        txt = p.read_text(encoding="utf-8", errors="replace").strip()
+        return p.stem, [{"title": p.stem, "text": txt, "char_count": len(txt)}]
+
+    if ext == ".epub":
+        import warnings as _warn
+        with _warn.catch_warnings():
+            _warn.simplefilter("ignore")
+            from ebooklib import ITEM_DOCUMENT, epub
+            from bs4 import BeautifulSoup
+
+        book = epub.read_epub(str(p))
+        title_meta = book.get_metadata("DC", "title")
+        doc_title = (title_meta[0][0] if title_meta else None) or p.stem
+
+        href_titles: dict[str, str] = {}
+
+        def _walk_toc(nodes) -> None:
+            for item in nodes or ():
+                if isinstance(item, tuple) and len(item) == 2:
+                    sec, children = item
+                    sec_href = getattr(sec, "href", None)
+                    sec_title = getattr(sec, "title", None)
+                    if sec_href and sec_title:
+                        href_titles[sec_href.split("#", 1)[0]] = str(sec_title).strip()
+                    _walk_toc(children)
+                else:
+                    href = getattr(item, "href", None)
+                    t = getattr(item, "title", None)
+                    if href and t:
+                        href_titles[href.split("#", 1)[0]] = str(t).strip()
+
+        _walk_toc(getattr(book, "toc", None))
+
+        chapters: list[dict] = []
+        raw_docs = []
+        for idx, doc_item in enumerate(book.get_items_of_type(ITEM_DOCUMENT)):
+            soup = BeautifulSoup(doc_item.get_body_content(), "html.parser")
+            for bad in soup(["script", "style", "nav"]):
+                bad.decompose()
+            lines = [ln.strip() for ln in soup.get_text("\n").splitlines() if ln.strip()]
+            clean = "\n\n".join(lines).strip()
+            if not clean:
+                continue
+            item_name = str(doc_item.get_name() or "")
+            base_name = item_name.split("#", 1)[0]
+            h_tag = soup.find(["h1", "h2", "h3"])
+            ch_title = (
+                href_titles.get(base_name)
+                or href_titles.get(os.path.basename(base_name))
+                or (h_tag.get_text(" ", strip=True) if h_tag else None)
+                or f"Section {idx + 1}"
+            )
+            entry = {"title": str(ch_title)[:80], "text": clean, "char_count": len(clean)}
+            raw_docs.append(entry)
+            if len(clean) >= 40:
+                chapters.append(entry)
+
+        final_chapters = chapters or raw_docs
+        if not final_chapters:
+            raise ValueError("No readable text chapters were found in this EPUB file.")
+        return str(doc_title), final_chapters
+
+    if ext == ".pdf":
+        import pymupdf
+
+        doc = pymupdf.open(str(p))
+        try:
+            doc_title = (doc.metadata or {}).get("title") or p.stem
+            toc = doc.get_toc() or []
+            page_count = doc.page_count
+            if page_count == 0:
+                raise ValueError("This PDF has 0 pages.")
+
+            def _clean_pages(start_0: int, end_0_excl: int) -> str:
+                buf = []
+                for pi in range(max(0, start_0), min(page_count, end_0_excl)):
+                    txt = doc[pi].get_text("text") or ""
+                    txt = re.sub(r"(\w)-\n(\w)", r"\1\2", txt)
+                    txt = re.sub(r"[ \t]+", " ", txt).strip()
+                    if txt:
+                        buf.append(txt)
+                return "\n\n".join(buf).strip()
+
+            chapters = []
+            top_toc = [entry for entry in toc if len(entry) >= 3 and entry[0] in (1, 2)]
+            if len(top_toc) >= 2:
+                for i, entry in enumerate(top_toc):
+                    ch_title = str(entry[1]).strip() or f"Chapter {i + 1}"
+                    start_p = max(0, int(entry[2]) - 1)
+                    end_p = (
+                        max(start_p + 1, int(top_toc[i + 1][2]) - 1)
+                        if i + 1 < len(top_toc)
+                        else page_count
+                    )
+                    text_block = _clean_pages(start_p, end_p)
+                    if text_block:
+                        chapters.append({
+                            "title": ch_title[:80],
+                            "text": text_block,
+                            "char_count": len(text_block),
+                        })
+            if not chapters:
+                step = 5
+                for start_p in range(0, page_count, step):
+                    end_p = min(page_count, start_p + step)
+                    text_block = _clean_pages(start_p, end_p)
+                    if text_block:
+                        label = (
+                            f"Page {start_p + 1}"
+                            if end_p - start_p == 1
+                            else f"Pages {start_p + 1}-{end_p}"
+                        )
+                        chapters.append({
+                            "title": label,
+                            "text": text_block,
+                            "char_count": len(text_block),
+                        })
+            if not chapters:
+                raise ValueError("No extractable text found in this PDF (it may be scanned images).")
+            return str(doc_title), chapters
+        finally:
+            doc.close()
+
+    raise ValueError(f"Unsupported document format {ext!r}. Use .txt, .md, .epub, or .pdf.")
+
+
+def handle_extract_document(req: dict) -> None:
+    path = req["path"]
+    title, chapters = _extract_document_chapters(path)
+    emit({
+        "event": "document_extracted",
+        "title": title,
+        "path": path,
+        "chapters": chapters,
+    })
+
+
 def main() -> None:
     import json
     for raw_line in sys.stdin:
@@ -1562,6 +2115,8 @@ def main() -> None:
                 handle_audio_info(req)
             elif cmd == "free_memory":
                 handle_free_memory(req)
+            elif cmd == "extract_document":
+                handle_extract_document(req)
             elif cmd == "shutdown":
                 break
             else:

@@ -2,9 +2,9 @@ use crate::audio::{AudioPlayer, PlaybackSnapshot};
 use crate::protocol::{
     builtin_voice_description, describe_markup_segment, has_any_expression_markup,
     language_display_name, parse_expression_markup, parse_expression_spans,
-    sample_text_for_language, GenerateRequest, MarkupKind, ModelCategory, ModelInfo,
-    NormalizeSpan, TagTooltipInfo, VoiceEntry, WorkerEvent, WorkerRequest, EXPRESSION_TAGS,
-    MODEL_CATALOG, VOCAL_EVENT_TAGS,
+    sample_text_for_language, DocumentChapter, GenerateRequest, MarkupKind, ModelCategory,
+    ModelInfo, NormalizeSpan, TagTooltipInfo, VoiceBlend, VoiceEntry, WorkerEvent, WorkerRequest,
+    EXPRESSION_TAGS, MODEL_CATALOG, VOCAL_EVENT_TAGS,
 };
 use crate::recorder::{MicRecorder, MAX_RECORD_SECS};
 use crate::state::{
@@ -28,6 +28,15 @@ enum ActiveTab {
     Speak,
     CloneVoice,
     ModelsSettings,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ModelFilterTab {
+    All,
+    FastCpu,
+    Kokoro,
+    StudioLm,
+    Classic,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -167,6 +176,12 @@ pub struct VoxaStudioApp {
     favorites_only: bool,
     speak_text: String,
     last_auto_sample: String,
+    loaded_doc_title: Option<String>,
+    loaded_chapters: Vec<DocumentChapter>,
+    loaded_chapter_idx: usize,
+    blend_enabled: bool,
+    blend_second_voice: String,
+    blend_primary_pct: u32,
 
     // Clone tab state
     clone_source: CloneSourceMode,
@@ -208,10 +223,12 @@ pub struct VoxaStudioApp {
     history: Vec<HistoryItem>,
 
     // Models & Settings tab draft configuration
+    model_filter: ModelFilterTab,
     draft_model_name: String,
     draft_custom_repo: String,
     draft_tiny_weights: String,
     draft_tiny_backend: String,
+    draft_kokoro_weights: String,
     draft_k2_weights: String,
     draft_k2_decoder: String,
     draft_device: String,
@@ -237,6 +254,7 @@ impl VoxaStudioApp {
 
         let mut app = Self {
             storage,
+            model_filter: ModelFilterTab::All,
             draft_model_name: config.last_model_name.clone(),
             draft_custom_repo: String::new(),
             draft_tiny_weights: config
@@ -249,6 +267,11 @@ impl VoxaStudioApp {
                 .clone()
                 .filter(|b| b == "onnx" || b == "torch")
                 .unwrap_or_else(|| "onnx".to_string()),
+            draft_kokoro_weights: config
+                .last_weights
+                .clone()
+                .filter(|w| w == "int8" || w == "fp16" || w == "fp32")
+                .unwrap_or_else(|| "int8".to_string()),
             draft_k2_weights: config
                 .last_weights
                 .clone()
@@ -287,6 +310,12 @@ impl VoxaStudioApp {
             favorites_only: false,
             speak_text: STORY_STARTERS[1].text.to_string(),
             last_auto_sample: STORY_STARTERS[1].text.to_string(),
+            loaded_doc_title: None,
+            loaded_chapters: Vec::new(),
+            loaded_chapter_idx: 0,
+            blend_enabled: false,
+            blend_second_voice: String::new(),
+            blend_primary_pct: 60,
 
             clone_source: CloneSourceMode::UploadFile,
             clone_ref_path: None,
@@ -451,6 +480,12 @@ impl VoxaStudioApp {
                 None,
                 Some(self.draft_threads),
             ),
+            Some(ModelCategory::KokoroOnnx) => (
+                Some("onnx".to_string()),
+                Some(self.draft_kokoro_weights.clone()),
+                None,
+                Some(self.draft_threads),
+            ),
             Some(ModelCategory::StudioLm) => (
                 None,
                 Some(self.draft_k2_weights.clone()),
@@ -534,7 +569,11 @@ impl VoxaStudioApp {
                     if let Some(w) = &self.config.last_weights {
                         if w == "int8" || w == "int4" {
                             self.draft_tiny_weights = w.clone();
-                        } else if w == "emb4" || w == "packed" || w == "full" {
+                        }
+                        if w == "int8" || w == "fp16" || w == "fp32" {
+                            self.draft_kokoro_weights = w.clone();
+                        }
+                        if w == "emb4" || w == "packed" || w == "full" {
                             self.draft_k2_weights = w.clone();
                         }
                     }
@@ -776,6 +815,32 @@ impl VoxaStudioApp {
                         detail: None,
                     });
                 }
+                WorkerEvent::DocumentExtracted {
+                    title,
+                    path: _,
+                    chapters,
+                } => {
+                    self.busy = None;
+                    let count = chapters.len();
+                    if let Some(first) = chapters.first() {
+                        if self.active_tab == ActiveTab::CloneVoice {
+                            self.clone_text = first.text.clone();
+                        } else {
+                            self.speak_text = first.text.clone();
+                        }
+                    }
+                    self.loaded_doc_title = Some(title.clone());
+                    self.loaded_chapters = chapters;
+                    self.loaded_chapter_idx = 0;
+                    self.banner = Some(BannerMessage {
+                        kind: BannerKind::Success,
+                        text: format!(
+                            "Loaded \"{title}\" ({count} {}). Select any chapter above the script box.",
+                            if count == 1 { "section" } else { "sections" }
+                        ),
+                        detail: None,
+                    });
+                }
                 WorkerEvent::Error { message, detail } => {
                     self.busy = None;
                     self.download_progress = None;
@@ -829,10 +894,28 @@ impl VoxaStudioApp {
                 .default_language
                 .clone()
                 .unwrap_or_else(|| "All".to_string());
+        } else if info.family == "kokoro" {
+            self.selected_language = "All".to_string();
         } else if info.languages.contains(&"English".to_string()) {
             self.selected_language = "English".to_string();
         } else {
             self.selected_language = "All".to_string();
+        }
+
+        if info.supports_voice_blending {
+            let valid_second = !self.blend_second_voice.is_empty()
+                && info.voices.iter().any(|v| v.name == self.blend_second_voice);
+            if !valid_second {
+                self.blend_second_voice = info
+                    .voices
+                    .iter()
+                    .find(|v| v.name == "am_adam" && v.name != self.selected_voice)
+                    .or_else(|| info.voices.iter().find(|v| v.name != self.selected_voice))
+                    .map(|v| v.name.clone())
+                    .unwrap_or_default();
+            }
+        } else {
+            self.blend_enabled = false;
         }
 
         if let Some(preset_name) = &info.default_preset {
@@ -952,8 +1035,25 @@ impl VoxaStudioApp {
             Some(self.selected_voice.clone()).filter(|v| !v.is_empty())
         };
 
-        let lang_opt = if !use_clone && info.family == "kitten2_tiny" && self.selected_language != "All" {
+        let lang_opt = if !use_clone
+            && (info.family == "kitten2_tiny" || info.family == "kokoro")
+            && self.selected_language != "All"
+        {
             Some(self.selected_language.clone())
+        } else {
+            None
+        };
+
+        let voice_blend_opt = if !use_clone
+            && info.supports_voice_blending
+            && self.blend_enabled
+            && !self.blend_second_voice.is_empty()
+            && self.blend_second_voice != self.selected_voice
+        {
+            Some(VoiceBlend {
+                second_voice: self.blend_second_voice.clone(),
+                primary_weight: (self.blend_primary_pct as f32 / 100.0).clamp(0.05, 0.95),
+            })
         } else {
             None
         };
@@ -1011,6 +1111,14 @@ impl VoxaStudioApp {
             } else {
                 "Custom Clone".to_string()
             }
+        } else if let Some(ref b) = voice_blend_opt {
+            format!(
+                "{} {}% + {} {}%",
+                self.selected_voice,
+                self.blend_primary_pct,
+                b.second_voice,
+                100 - self.blend_primary_pct
+            )
         } else {
             self.selected_voice.clone()
         };
@@ -1018,6 +1126,7 @@ impl VoxaStudioApp {
         let req = WorkerRequest::Generate(GenerateRequest {
             text: text.clone(),
             voice: voice_opt,
+            voice_blend: voice_blend_opt,
             language: lang_opt,
             reference,
             reference_text: if use_clone && !self.clone_transcript.trim().is_empty() {
@@ -1112,7 +1221,8 @@ impl VoxaStudioApp {
             let req = WorkerRequest::Generate(GenerateRequest {
                 text: greeting,
                 voice: Some(voice.name.clone()),
-                language: if info.family == "kitten2_tiny" {
+                voice_blend: None,
+                language: if info.family == "kitten2_tiny" || info.family == "kokoro" {
                     Some(voice.language.clone())
                 } else {
                     None
@@ -1158,6 +1268,9 @@ impl VoxaStudioApp {
             match ext.as_str() {
                 "txt" | "md" => {
                     if let Ok(content) = std::fs::read_to_string(&path) {
+                        self.loaded_doc_title = None;
+                        self.loaded_chapters.clear();
+                        self.loaded_chapter_idx = 0;
                         if self.active_tab == ActiveTab::CloneVoice {
                             self.clone_text = content;
                         } else {
@@ -1173,12 +1286,42 @@ impl VoxaStudioApp {
                         });
                     }
                 }
+                "epub" | "pdf" => {
+                    self.open_book_document(&path);
+                }
                 "wav" | "mp3" | "flac" | "ogg" | "m4a" | "aac" => {
                     self.active_tab = ActiveTab::CloneVoice;
                     self.clone_source = CloneSourceMode::UploadFile;
                     self.set_clone_reference_file(path);
                 }
                 _ => {}
+            }
+        }
+    }
+
+    fn open_book_document(&mut self, path: &Path) {
+        if let Some(worker) = self.worker.as_mut() {
+            let req = WorkerRequest::ExtractDocument {
+                path: path.to_string_lossy().to_string(),
+            };
+            match worker.send(&req) {
+                Ok(()) => {
+                    self.banner = Some(BannerMessage {
+                        kind: BannerKind::Info,
+                        text: format!(
+                            "Reading chapters from {}...",
+                            path.file_name().unwrap_or_default().to_string_lossy()
+                        ),
+                        detail: None,
+                    });
+                }
+                Err(e) => {
+                    self.banner = Some(BannerMessage {
+                        kind: BannerKind::Error,
+                        text: e,
+                        detail: None,
+                    });
+                }
             }
         }
     }
@@ -2426,6 +2569,71 @@ impl VoxaStudioApp {
                                 ui.add_space(6.0);
                             }
 
+                            if !use_clone && info.supports_voice_blending && info.voices.len() >= 2 {
+                                ui.checkbox(&mut self.blend_enabled, "Blend two voices (Kokoro)");
+                                if self.blend_enabled {
+                                    if self.blend_second_voice.is_empty()
+                                        || self.blend_second_voice == self.selected_voice
+                                    {
+                                        self.blend_second_voice = info
+                                            .voices
+                                            .iter()
+                                            .find(|v| v.name != self.selected_voice)
+                                            .map(|v| v.name.clone())
+                                            .unwrap_or_default();
+                                    }
+                                    ui.horizontal(|ui| {
+                                        ui.label(
+                                            RichText::new("2nd:")
+                                                .size(12.0)
+                                                .color(pal.ink_muted),
+                                        );
+                                        egui::ComboBox::from_id_salt("kokoro_blend_second_voice")
+                                            .selected_text(&self.blend_second_voice)
+                                            .width((inner_w - 42.0).max(110.0))
+                                            .show_ui(ui, |ui| {
+                                                for v in &info.voices {
+                                                    if v.name == self.selected_voice {
+                                                        continue;
+                                                    }
+                                                    ui.selectable_value(
+                                                        &mut self.blend_second_voice,
+                                                        v.name.clone(),
+                                                        format!("{} ({})", v.name, v.language),
+                                                    );
+                                                }
+                                            });
+                                    });
+                                    ui.spacing_mut().slider_width = (inner_w - 75.0).max(95.0);
+                                    ui.add(
+                                        egui::Slider::new(&mut self.blend_primary_pct, 10..=90)
+                                            .suffix("%"),
+                                    );
+                                    ui.label(
+                                        RichText::new(format!(
+                                            "{}% {} + {}% {}",
+                                            self.blend_primary_pct,
+                                            self.selected_voice,
+                                            100 - self.blend_primary_pct,
+                                            self.blend_second_voice
+                                        ))
+                                        .size(11.0)
+                                        .color(pal.primary),
+                                    );
+                                    ui.horizontal(|ui| {
+                                        for (pct, lbl) in [(70, "70/30"), (50, "50/50"), (30, "30/70")] {
+                                            if ui
+                                                .selectable_label(self.blend_primary_pct == pct, lbl)
+                                                .clicked()
+                                            {
+                                                self.blend_primary_pct = pct;
+                                            }
+                                        }
+                                    });
+                                }
+                                ui.add_space(6.0);
+                            }
+
                             if info.family == "kitten2" {
                                 ui.label(
                                     RichText::new("Delivery Mode")
@@ -2732,7 +2940,7 @@ impl VoxaStudioApp {
                 self.last_auto_sample = sample.clone();
                 self.speak_text = sample;
             }
-        } else if info.family == "kitten2_tiny"
+        } else if (info.family == "kitten2_tiny" || info.family == "kokoro")
             && (self.speak_text.trim() == self.last_auto_sample.trim()
                 || self.speak_text.trim().is_empty())
         {
@@ -2788,6 +2996,25 @@ impl VoxaStudioApp {
                         format!("{} · {lang}", self.selected_voice)
                     };
                     pill_badge(ui, &badge, pal.accent_blue_soft, pal.accent_blue);
+                    if self.blend_enabled
+                        && self
+                            .model_info
+                            .as_ref()
+                            .is_some_and(|m| m.supports_voice_blending)
+                        && !self.blend_second_voice.is_empty()
+                    {
+                        pill_badge(
+                            ui,
+                            &format!(
+                                "Mix {}% + {}% {}",
+                                self.blend_primary_pct,
+                                100 - self.blend_primary_pct,
+                                self.blend_second_voice
+                            ),
+                            pal.primary.gamma_multiply(0.18),
+                            pal.primary,
+                        );
+                    }
                 }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -2805,12 +3032,26 @@ impl VoxaStudioApp {
                             self.speak_text.clear();
                         }
                     }
-                    if ui.button("Import .txt").clicked() {
+                    if ui
+                        .button("Import File / Book")
+                        .on_hover_text("Import .txt, .md, .epub book, or .pdf document")
+                        .clicked()
+                    {
                         if let Some(path) = rfd::FileDialog::new()
-                            .add_filter("Text files", &["txt", "md"])
+                            .add_filter("Scripts & Books", &["txt", "md", "epub", "pdf"])
                             .pick_file()
                         {
-                            if let Ok(content) = std::fs::read_to_string(&path) {
+                            let ext = path
+                                .extension()
+                                .and_then(|e| e.to_str())
+                                .map(|s| s.to_ascii_lowercase())
+                                .unwrap_or_default();
+                            if ext == "epub" || ext == "pdf" {
+                                self.open_book_document(&path);
+                            } else if let Ok(content) = std::fs::read_to_string(&path) {
+                                self.loaded_doc_title = None;
+                                self.loaded_chapters.clear();
+                                self.loaded_chapter_idx = 0;
                                 if use_clone {
                                     self.clone_text = content;
                                 } else {
@@ -2846,6 +3087,106 @@ impl VoxaStudioApp {
             });
 
             ui.add_space(8.0);
+
+            if !use_clone && !self.loaded_chapters.is_empty() {
+                let doc_title = self
+                    .loaded_doc_title
+                    .as_deref()
+                    .unwrap_or("Imported Document");
+                let total_ch = self.loaded_chapters.len();
+                let mut select_idx: Option<usize> = None;
+                let mut merge_all = false;
+                let mut close_doc = false;
+
+                egui::Frame::new()
+                    .fill(pal.card_alt)
+                    .stroke(Stroke::new(1.0_f32, pal.border))
+                    .corner_radius(CornerRadius::same(8))
+                    .inner_margin(egui::Margin::symmetric(10, 6))
+                    .show(ui, |ui| {
+                        ui.horizontal_wrapped(|ui| {
+                            pill_badge(
+                                ui,
+                                &format!("Book · {}", truncate_str(doc_title, 28)),
+                                pal.accent_blue_soft,
+                                pal.accent_blue,
+                            );
+                            if ui
+                                .add_enabled(self.loaded_chapter_idx > 0, egui::Button::new("Prev").small())
+                                .clicked()
+                            {
+                                select_idx = Some(self.loaded_chapter_idx.saturating_sub(1));
+                            }
+                            let cur_label = self
+                                .loaded_chapters
+                                .get(self.loaded_chapter_idx)
+                                .map(|c| {
+                                    format!(
+                                        "{}/{}: {}",
+                                        self.loaded_chapter_idx + 1,
+                                        total_ch,
+                                        truncate_str(&c.title, 26)
+                                    )
+                                })
+                                .unwrap_or_default();
+                            egui::ComboBox::from_id_salt("book_chapter_combo")
+                                .selected_text(cur_label)
+                                .width(220.0)
+                                .show_ui(ui, |ui| {
+                                    for (idx, ch) in self.loaded_chapters.iter().enumerate() {
+                                        if ui
+                                            .selectable_label(
+                                                idx == self.loaded_chapter_idx,
+                                                format!(
+                                                    "{}. {} ({} chars)",
+                                                    idx + 1,
+                                                    truncate_str(&ch.title, 34),
+                                                    ch.char_count
+                                                ),
+                                            )
+                                            .clicked()
+                                        {
+                                            select_idx = Some(idx);
+                                        }
+                                    }
+                                });
+                            if ui
+                                .add_enabled(
+                                    self.loaded_chapter_idx + 1 < total_ch,
+                                    egui::Button::new("Next").small(),
+                                )
+                                .clicked()
+                            {
+                                select_idx = Some((self.loaded_chapter_idx + 1).min(total_ch - 1));
+                            }
+                            if total_ch > 1 && ui.small_button("Load All").clicked() {
+                                merge_all = true;
+                            }
+                            if ui.small_button("Close").clicked() {
+                                close_doc = true;
+                            }
+                        });
+                    });
+
+                if let Some(idx) = select_idx {
+                    if let Some(ch) = self.loaded_chapters.get(idx) {
+                        self.loaded_chapter_idx = idx;
+                        self.speak_text = ch.text.clone();
+                    }
+                } else if merge_all {
+                    self.speak_text = self
+                        .loaded_chapters
+                        .iter()
+                        .map(|c| c.text.as_str())
+                        .collect::<Vec<_>>()
+                        .join("\n\n");
+                } else if close_doc {
+                    self.loaded_doc_title = None;
+                    self.loaded_chapters.clear();
+                    self.loaded_chapter_idx = 0;
+                }
+                ui.add_space(6.0);
+            }
 
             // Strictly bounded multiline script field
             let box_w = ui.available_width();
@@ -3521,471 +3862,586 @@ impl VoxaStudioApp {
                 }
 
                 if let Some(info) = &self.model_info {
+                    let friendly_name = MODEL_CATALOG
+                        .iter()
+                        .find(|m| m.repo_id == info.model_name)
+                        .map(|m| m.display_name)
+                        .unwrap_or_else(|| short_model_name(&info.model_name));
                     styled_card(ui, pal, |ui| {
-                        ui.horizontal_wrapped(|ui| {
-                            ui.label(
-                                RichText::new("Currently Loaded Engine:")
-                                    .size(14.5)
-                                    .strong()
-                                    .color(pal.ink),
-                            );
-                            pill_badge(ui, &info.model_name, pal.success_soft, pal.success);
-                            pill_badge(
-                                ui,
-                                &format!("{} Hz", info.sample_rate),
-                                pal.accent_blue_soft,
-                                pal.accent_blue,
-                            );
-                            let details = [
-                                format!("Family: {}", info.family),
-                                format!(
-                                    "Backend: {}",
-                                    info.backend.as_deref().unwrap_or("default")
-                                ),
-                                format!(
-                                    "Device: {}",
-                                    info.device.as_deref().unwrap_or("auto")
-                                ),
-                                info.weights
-                                    .as_deref()
-                                    .map(|w| format!("Weights: {w}"))
-                                    .unwrap_or_default(),
-                                info.decoder
-                                    .as_deref()
-                                    .map(|d| format!("Decoder: {d}"))
-                                    .unwrap_or_default(),
-                                format!("{} voices", info.voices.len()),
-                            ]
-                            .into_iter()
-                            .filter(|s| !s.is_empty())
-                            .collect::<Vec<_>>()
-                            .join(" · ");
-                            ui.label(RichText::new(details).size(12.5).color(pal.ink_muted));
-                            if ui
-                                .add_enabled(
-                                    self.busy.is_none(),
-                                    egui::Button::new("Free RAM").small(),
-                                )
-                                .on_hover_text("Trim caches, unload Whisper/encoder helpers, and release unused RAM back to Windows")
-                                .clicked()
-                            {
-                                if let Some(worker) = self.worker.as_mut() {
-                                    let _ = worker.send(&WorkerRequest::FreeMemory {
-                                        unload_model: false,
-                                    });
-                                }
-                            }
-                        });
-                    });
-                    ui.add_space(10.0);
-                }
-
-                for (category, heading, subtitle) in [
-                    (
-                        ModelCategory::TinyCpu,
-                        "Fast Everyday Voices (CPU-Friendly)",
-                        "Tiny multilingual models (4-83 MB) that speak instantly on any laptop or desktop CPU.",
-                    ),
-                    (
-                        ModelCategory::StudioLm,
-                        "Full Studio + Zero-Shot Voice Cloning (1.7B)",
-                        "Richest model with 115 voices, voice cloning from 5-30s audio, and [emotion] / <event> tags.",
-                    ),
-                    (
-                        ModelCategory::LegacyOnnx,
-                        "Classic Lightweight ONNX (V0.8)",
-                        "Original 8-voice English ONNX models with speed control and span-highlighted text normalization.",
-                    ),
-                ] {
-                    styled_card(ui, pal, |ui| {
-                        ui.label(RichText::new(heading).size(16.0).strong().color(pal.ink));
-                        ui.label(RichText::new(subtitle).size(12.5).color(pal.ink_muted));
-                        ui.add_space(6.0);
-
-                        let row_w = (ui.available_width() - 26.0).max(200.0);
-                        for entry in MODEL_CATALOG.iter().filter(|e| e.category == category) {
-                            let selected = self.draft_model_name == entry.repo_id
-                                && self.draft_custom_repo.trim().is_empty();
-                            let is_active_engine =
-                                loaded_model_name.as_deref() == Some(entry.repo_id)
-                                    && loading_model_name.is_none();
-                            let is_loading_this =
-                                loading_model_name.as_deref() == Some(entry.repo_id);
-                            let mut activate_this = false;
-
-                            egui::Frame::new()
-                                .fill(if selected || is_active_engine {
-                                    pal.card_bg
-                                } else {
-                                    pal.card_alt
-                                })
-                                .stroke(Stroke::new(
-                                    if is_active_engine || selected {
-                                        1.6_f32
-                                    } else {
-                                        1.0_f32
-                                    },
-                                    if is_active_engine {
-                                        pal.success
-                                    } else if selected {
-                                        pal.primary
-                                    } else {
-                                        pal.border
-                                    },
-                                ))
-                                .corner_radius(CornerRadius::same(10))
-                                .inner_margin(egui::Margin::symmetric(12, 8))
-                                .show(ui, |ui| {
-                                    ui.set_min_width(row_w);
-                                    ui.set_max_width(row_w);
-                                    ui.horizontal(|ui| {
-                                        if ui
-                                            .radio(
-                                                selected || is_active_engine,
-                                                RichText::new(entry.display_name)
-                                                    .strong()
-                                                    .size(14.0)
-                                                    .color(if is_active_engine {
-                                                        pal.success
-                                                    } else if selected {
-                                                        pal.primary
-                                                    } else {
-                                                        pal.ink
-                                                    }),
-                                            )
-                                            .clicked()
-                                        {
-                                            activate_this = true;
-                                        }
-                                        pill_badge(
-                                            ui,
-                                            entry.badge,
-                                            pal.primary.gamma_multiply(0.16),
-                                            pal.primary,
-                                        );
-                                        pill_badge(
-                                            ui,
-                                            entry.params,
-                                            pal.accent_blue_soft,
-                                            pal.accent_blue,
-                                        );
-                                        ui.label(
-                                            RichText::new(entry.size_summary)
-                                                .size(12.0)
-                                                .color(pal.ink_muted),
-                                        );
-
-                                        ui.with_layout(
-                                            egui::Layout::right_to_left(egui::Align::Center),
-                                            |ui| {
-                                                if is_active_engine {
-                                                    pill_badge(
-                                                        ui,
-                                                        "Active Engine",
-                                                        pal.success_soft,
-                                                        pal.success,
-                                                    );
-                                                } else if is_loading_this {
-                                                    pill_badge(
-                                                        ui,
-                                                        "Loading...",
-                                                        pal.warning_soft,
-                                                        pal.warning,
-                                                    );
-                                                    ui.spinner();
-                                                } else {
-                                                    let act_btn = egui::Button::new(
-                                                        RichText::new("Activate")
-                                                            .strong()
-                                                            .size(12.0)
-                                                            .color(pal.on_primary),
-                                                    )
-                                                    .fill(pal.primary)
-                                                    .corner_radius(CornerRadius::same(7))
-                                                    .min_size(Vec2::new(78.0, 26.0));
-                                                    if ui.add(act_btn).clicked() {
-                                                        activate_this = true;
-                                                    }
-                                                }
-                                            },
-                                        );
-                                    });
-                                    ui.label(
-                                        RichText::new(format!(
-                                            "{} — {}",
-                                            entry.languages_summary, entry.description
-                                        ))
-                                        .size(12.0)
-                                        .color(pal.ink_muted),
+                        card_header_row(
+                            ui,
+                            |ui| {
+                                ui.label(
+                                    RichText::new("Active Engine:")
+                                        .size(14.0)
+                                        .strong()
+                                        .color(pal.ink),
+                                );
+                                pill_badge(ui, friendly_name, pal.success_soft, pal.success);
+                                pill_badge(
+                                    ui,
+                                    &format!("{} voices · {} Hz", info.voices.len(), info.sample_rate),
+                                    pal.accent_blue_soft,
+                                    pal.accent_blue,
+                                );
+                                if info.supports_voice_blending {
+                                    pill_badge(
+                                        ui,
+                                        "Voice Blending",
+                                        pal.primary.gamma_multiply(0.16),
+                                        pal.primary,
                                     );
-                                });
-
-                            if activate_this {
-                                self.draft_model_name = entry.repo_id.to_string();
-                                self.draft_custom_repo.clear();
-                                if let Some(dw) = entry.default_weights {
-                                    match entry.category {
-                                        ModelCategory::TinyCpu => {
-                                            self.draft_tiny_weights = dw.to_string();
-                                        }
-                                        ModelCategory::StudioLm => {
-                                            self.draft_k2_weights = dw.to_string();
-                                        }
-                                        ModelCategory::LegacyOnnx => {}
+                                }
+                                if info.supports_cloning {
+                                    pill_badge(
+                                        ui,
+                                        "Voice Cloning",
+                                        pal.primary.gamma_multiply(0.16),
+                                        pal.primary,
+                                    );
+                                }
+                            },
+                            |ui| {
+                                if ui
+                                    .add_enabled(
+                                        self.busy.is_none(),
+                                        egui::Button::new("Free RAM").small(),
+                                    )
+                                    .on_hover_text("Release transient caches and trim unused RAM back to Windows")
+                                    .clicked()
+                                {
+                                    if let Some(worker) = self.worker.as_mut() {
+                                        let _ = worker.send(&WorkerRequest::FreeMemory {
+                                            unload_model: false,
+                                        });
                                     }
                                 }
-                                switch_requested = true;
-                            }
-                            ui.add_space(4.0);
-                        }
+                                if ui
+                                    .add_enabled(
+                                        self.busy.is_none(),
+                                        egui::Button::new("Unload").small(),
+                                    )
+                                    .on_hover_text("Unload the active engine to free maximum host memory")
+                                    .clicked()
+                                {
+                                    if let Some(worker) = self.worker.as_mut() {
+                                        let _ = worker.send(&WorkerRequest::FreeMemory {
+                                            unload_model: true,
+                                        });
+                                    }
+                                }
+                            },
+                        );
                     });
                     ui.add_space(10.0);
                 }
 
+                // Quick Pick Goal Cards
                 styled_card(ui, pal, |ui| {
                     ui.label(
-                        RichText::new("Engine Options & Preferences")
+                        RichText::new("Quick Pick — Choose by What You Need")
                             .size(15.5)
                             .strong()
                             .color(pal.ink),
                     );
-                    ui.add_space(6.0);
-
-                    let selected_cat = MODEL_CATALOG
-                        .iter()
-                        .find(|m| m.repo_id == self.draft_model_name)
-                        .map(|m| m.category);
-
-                    match selected_cat {
-                        Some(ModelCategory::TinyCpu) => {
-                            ui.horizontal_wrapped(|ui| {
-                                ui.label("Runtime:");
-                                if ui
-                                    .radio_value(
-                                        &mut self.draft_tiny_backend,
-                                        "onnx".into(),
-                                        "ONNX (Fastest CPU)",
-                                    )
-                                    .changed()
-                                {
-                                    switch_requested = true;
-                                }
-                                if ui
-                                    .radio_value(
-                                        &mut self.draft_tiny_backend,
-                                        "torch".into(),
-                                        "PyTorch (FP32)",
-                                    )
-                                    .changed()
-                                {
-                                    switch_requested = true;
-                                }
-
-                                if self.draft_tiny_backend == "onnx" {
-                                    ui.separator();
-                                    ui.label("Weight size:");
-                                    if ui
-                                        .radio_value(
-                                            &mut self.draft_tiny_weights,
-                                            "int8".into(),
-                                            "int8 (Standard)",
-                                        )
-                                        .changed()
-                                    {
-                                        switch_requested = true;
-                                    }
-                                    if ui
-                                        .radio_value(
-                                            &mut self.draft_tiny_weights,
-                                            "int4".into(),
-                                            "int4 (Half size)",
-                                        )
-                                        .changed()
-                                    {
-                                        switch_requested = true;
-                                    }
-                                }
-                            });
-                            ui.horizontal_wrapped(|ui| {
-                                ui.add(
-                                    egui::Slider::new(&mut self.draft_threads, 1..=16)
-                                        .text("CPU Threads"),
-                                );
-                                ui.label("Device:");
-                                for dev in ["auto", "cpu", "cuda"] {
-                                    if ui.radio_value(&mut self.draft_device, dev.into(), dev).changed() {
-                                        switch_requested = true;
-                                    }
-                                }
-                            });
-                        }
-                        Some(ModelCategory::StudioLm) => {
-                            ui.horizontal_wrapped(|ui| {
-                                ui.label("Weights:");
-                                if ui
-                                    .radio_value(
-                                        &mut self.draft_k2_weights,
-                                        "emb4".into(),
-                                        "emb4 (492 MB, fast download)",
-                                    )
-                                    .changed()
-                                {
-                                    switch_requested = true;
-                                }
-                                if ui
-                                    .radio_value(
-                                        &mut self.draft_k2_weights,
-                                        "packed".into(),
-                                        "packed (954 MB, lossless)",
-                                    )
-                                    .changed()
-                                {
-                                    switch_requested = true;
-                                }
-                                if ui
-                                    .radio_value(
-                                        &mut self.draft_k2_weights,
-                                        "full".into(),
-                                        "full (3.47 GB bf16)",
-                                    )
-                                    .changed()
-                                {
-                                    switch_requested = true;
-                                }
-                            });
-                            ui.horizontal_wrapped(|ui| {
-                                ui.label("Audio Decoder:");
-                                if ui
-                                    .radio_value(
-                                        &mut self.draft_k2_decoder,
-                                        "student_w4".into(),
-                                        "student_w4 (39 MB compact)",
-                                    )
-                                    .changed()
-                                {
-                                    switch_requested = true;
-                                }
-                                if ui
-                                    .radio_value(
-                                        &mut self.draft_k2_decoder,
-                                        "default".into(),
-                                        "default (459 MB best quality)",
-                                    )
-                                    .changed()
-                                {
-                                    switch_requested = true;
-                                }
-                            });
-                            ui.horizontal_wrapped(|ui| {
-                                ui.label("Device:");
-                                if ui.radio_value(&mut self.draft_device, "auto".into(), "Auto").changed() {
-                                    switch_requested = true;
-                                }
-                                if ui
-                                    .radio_value(
-                                        &mut self.draft_device,
-                                        "cpu".into(),
-                                        "CPU (Recommended if GPU < 6 GB)",
-                                    )
-                                    .changed()
-                                {
-                                    switch_requested = true;
-                                }
-                                if ui.radio_value(&mut self.draft_device, "cuda".into(), "CUDA GPU").changed() {
-                                    switch_requested = true;
-                                }
-                            });
-                        }
-                        Some(ModelCategory::LegacyOnnx) | None => {
-                            ui.horizontal_wrapped(|ui| {
-                                ui.label("Device:");
-                                for (val, lbl) in [
-                                    ("auto", "Auto"),
-                                    ("cpu", "CPU"),
-                                    ("cuda", "CUDA"),
-                                    ("amd_gpu", "AMD GPU"),
-                                ] {
-                                    if ui.radio_value(&mut self.draft_device, val.into(), lbl).changed() {
-                                        switch_requested = true;
-                                    }
-                                }
-                            });
-                        }
-                    }
-
-                    ui.separator();
-
-                    ui.horizontal(|ui| {
-                        ui.label("Custom Repo or Local Folder:");
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.draft_custom_repo)
-                                .hint_text("Optional: local path or Hugging Face repo ID")
-                                .desired_width(300.0),
-                        );
-                        if ui.button("Browse Folder...").clicked() {
-                            if let Some(dir) = rfd::FileDialog::new().pick_folder() {
-                                self.draft_custom_repo = dir.to_string_lossy().to_string();
-                            }
-                        }
-                    });
-
-                    ui.horizontal(|ui| {
-                        ui.label("Custom Model Cache Dir:");
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.config.cache_dir)
-                                .hint_text("Default (~/.cache/huggingface)")
-                                .desired_width(280.0),
-                        );
-                        if ui.button("Browse...").clicked() {
-                            if let Some(dir) = rfd::FileDialog::new().pick_folder() {
-                                self.config.cache_dir = dir.to_string_lossy().to_string();
-                                self.storage.save_config(&self.config);
-                            }
-                        }
-                    });
-
-                    ui.horizontal(|ui| {
-                        ui.label("HF Token (private repos only):");
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.config.hf_token)
-                                .password(true)
-                                .hint_text("Optional")
-                                .desired_width(240.0),
-                        );
-                        if ui.button("Save Preferences").clicked() {
-                            self.storage.save_config(&self.config);
-                            self.banner = Some(BannerMessage {
-                                kind: BannerKind::Success,
-                                text: "Saved preferences.".to_string(),
-                                detail: None,
-                            });
-                        }
-                    });
-
+                    ui.label(
+                        RichText::new("One click switches and downloads (on first use) the best engine for your task.")
+                            .size(12.0)
+                            .color(pal.ink_muted),
+                    );
                     ui.add_space(8.0);
 
-                    ui.horizontal(|ui| {
-                        let load_btn = egui::Button::new(
-                            RichText::new("Reload / Load Custom Model")
-                                .size(14.5)
+                    let card_w = ((ui.available_width() - 44.0) / 3.0).max(170.0);
+                    ui.horizontal_wrapped(|ui| {
+                        for (title, repo_id, tag, summary) in [
+                            (
+                                "Fast Everyday CPU",
+                                "KittenML/kitten-tts-2-nano",
+                                "~200 MB RAM · Instant",
+                                "Lightweight 8-language speech that runs faster than real time on any CPU.",
+                            ),
+                            (
+                                "Books & Voice Blend",
+                                "kokoro-tts/kokoro-v1.0",
+                                "~300 MB RAM · 54 Voices",
+                                "Kokoro-82M crisp voices with dual-voice blending & EPUB/PDF chapter reader.",
+                            ),
+                            (
+                                "Cloning & Emotions",
+                                "KittenML/kitten-tts-2",
+                                "1.7B · 115 Voices",
+                                "Zero-shot voice cloning from 5-30s audio plus native [emotion] & <event> tags.",
+                            ),
+                        ] {
+                            let is_active = loaded_model_name.as_deref() == Some(repo_id);
+                            let mut pick = false;
+                            egui::Frame::new()
+                                .fill(if is_active { pal.card_bg } else { pal.card_alt })
+                                .stroke(Stroke::new(
+                                    if is_active { 1.6_f32 } else { 1.0_f32 },
+                                    if is_active { pal.success } else { pal.border_strong },
+                                ))
+                                .corner_radius(CornerRadius::same(10))
+                                .inner_margin(egui::Margin::same(11))
+                                .show(ui, |ui| {
+                                    ui.set_min_width(card_w);
+                                    ui.set_max_width(card_w);
+                                    ui.horizontal(|ui| {
+                                        ui.label(
+                                            RichText::new(title)
+                                                .strong()
+                                                .size(13.5)
+                                                .color(if is_active { pal.success } else { pal.ink }),
+                                        );
+                                    });
+                                    pill_badge(
+                                        ui,
+                                        tag,
+                                        pal.accent_blue_soft,
+                                        pal.accent_blue,
+                                    );
+                                    ui.add_space(3.0);
+                                    ui.label(
+                                        RichText::new(summary).size(11.5).color(pal.ink_muted),
+                                    );
+                                    ui.add_space(6.0);
+                                    if is_active {
+                                        pill_badge(ui, "Active Engine", pal.success_soft, pal.success);
+                                    } else {
+                                        let btn = egui::Button::new(
+                                            RichText::new("Use This Engine")
+                                                .size(12.0)
+                                                .strong()
+                                                .color(pal.on_primary),
+                                        )
+                                        .fill(pal.primary)
+                                        .min_size(Vec2::new((card_w - 22.0).max(100.0), 26.0))
+                                        .corner_radius(CornerRadius::same(7));
+                                        if ui.add(btn).clicked() {
+                                            pick = true;
+                                        }
+                                    }
+                                });
+                            if pick {
+                                self.draft_model_name = repo_id.to_string();
+                                self.draft_custom_repo.clear();
+                                if let Some(entry) = MODEL_CATALOG.iter().find(|e| e.repo_id == repo_id) {
+                                    if let Some(dw) = entry.default_weights {
+                                        match entry.category {
+                                            ModelCategory::TinyCpu => self.draft_tiny_weights = dw.to_string(),
+                                            ModelCategory::KokoroOnnx => self.draft_kokoro_weights = dw.to_string(),
+                                            ModelCategory::StudioLm => self.draft_k2_weights = dw.to_string(),
+                                            ModelCategory::LegacyOnnx => {}
+                                        }
+                                    }
+                                }
+                                switch_requested = true;
+                            }
+                        }
+                    });
+                });
+
+                ui.add_space(10.0);
+
+                // Filterable All-Models Browser + Simple Quality Selector
+                styled_card(ui, pal, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(
+                            RichText::new("Model Catalog")
+                                .size(15.5)
                                 .strong()
-                                .color(pal.on_primary),
-                        )
-                        .fill(pal.primary)
-                        .min_size(Vec2::new(205.0, 36.0))
-                        .corner_radius(CornerRadius::same(10));
-                        if ui.add(load_btn).clicked() {
+                                .color(pal.ink),
+                        );
+                        ui.add_space(8.0);
+                        for (tab, lbl) in [
+                            (ModelFilterTab::All, "All Models"),
+                            (ModelFilterTab::FastCpu, "Fast CPU"),
+                            (ModelFilterTab::Kokoro, "Kokoro (Blend)"),
+                            (ModelFilterTab::StudioLm, "1.7B Studio"),
+                            (ModelFilterTab::Classic, "Classic 0.8"),
+                        ] {
+                            let selected = self.model_filter == tab;
+                            let chip = egui::Button::new(
+                                RichText::new(lbl)
+                                    .size(12.0)
+                                    .strong()
+                                    .color(if selected { pal.on_primary } else { pal.ink }),
+                            )
+                            .fill(if selected { pal.primary } else { pal.card_alt })
+                            .corner_radius(CornerRadius::same(14));
+                            if ui.add(chip).clicked() {
+                                self.model_filter = tab;
+                            }
+                        }
+                    });
+                    ui.add_space(8.0);
+
+                    let row_w = (ui.available_width() - 26.0).max(200.0);
+                    for entry in MODEL_CATALOG.iter().filter(|e| match self.model_filter {
+                        ModelFilterTab::All => true,
+                        ModelFilterTab::FastCpu => e.category == ModelCategory::TinyCpu,
+                        ModelFilterTab::Kokoro => e.category == ModelCategory::KokoroOnnx,
+                        ModelFilterTab::StudioLm => e.category == ModelCategory::StudioLm,
+                        ModelFilterTab::Classic => e.category == ModelCategory::LegacyOnnx,
+                    }) {
+                        let selected = self.draft_model_name == entry.repo_id
+                            && self.draft_custom_repo.trim().is_empty();
+                        let is_active_engine = loaded_model_name.as_deref() == Some(entry.repo_id)
+                            && loading_model_name.is_none();
+                        let is_loading_this = loading_model_name.as_deref() == Some(entry.repo_id);
+                        let mut activate_this = false;
+
+                        egui::Frame::new()
+                            .fill(if selected || is_active_engine {
+                                pal.card_bg
+                            } else {
+                                pal.card_alt
+                            })
+                            .stroke(Stroke::new(
+                                if is_active_engine || selected { 1.6_f32 } else { 1.0_f32 },
+                                if is_active_engine {
+                                    pal.success
+                                } else if selected {
+                                    pal.primary
+                                } else {
+                                    pal.border
+                                },
+                            ))
+                            .corner_radius(CornerRadius::same(10))
+                            .inner_margin(egui::Margin::symmetric(12, 8))
+                            .show(ui, |ui| {
+                                ui.set_min_width(row_w);
+                                ui.set_max_width(row_w);
+                                ui.horizontal(|ui| {
+                                    if ui
+                                        .radio(
+                                            selected || is_active_engine,
+                                            RichText::new(entry.display_name)
+                                                .strong()
+                                                .size(14.0)
+                                                .color(if is_active_engine {
+                                                    pal.success
+                                                } else if selected {
+                                                    pal.primary
+                                                } else {
+                                                    pal.ink
+                                                }),
+                                        )
+                                        .clicked()
+                                    {
+                                        activate_this = true;
+                                    }
+                                    pill_badge(
+                                        ui,
+                                        entry.badge,
+                                        pal.primary.gamma_multiply(0.16),
+                                        pal.primary,
+                                    );
+                                    pill_badge(
+                                        ui,
+                                        entry.params,
+                                        pal.accent_blue_soft,
+                                        pal.accent_blue,
+                                    );
+                                    ui.label(
+                                        RichText::new(entry.size_summary)
+                                            .size(12.0)
+                                            .color(pal.ink_muted),
+                                    );
+
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            if is_active_engine {
+                                                pill_badge(
+                                                    ui,
+                                                    "Active",
+                                                    pal.success_soft,
+                                                    pal.success,
+                                                );
+                                            } else if is_loading_this {
+                                                pill_badge(
+                                                    ui,
+                                                    "Loading...",
+                                                    pal.warning_soft,
+                                                    pal.warning,
+                                                );
+                                                ui.spinner();
+                                            } else {
+                                                let act_btn = egui::Button::new(
+                                                    RichText::new("Activate")
+                                                        .strong()
+                                                        .size(12.0)
+                                                        .color(pal.on_primary),
+                                                )
+                                                .fill(pal.primary)
+                                                .corner_radius(CornerRadius::same(7))
+                                                .min_size(Vec2::new(78.0, 26.0));
+                                                if ui.add(act_btn).clicked() {
+                                                    activate_this = true;
+                                                }
+                                            }
+                                        },
+                                    );
+                                });
+                                ui.label(
+                                    RichText::new(format!(
+                                        "{} — {}",
+                                        entry.languages_summary, entry.description
+                                    ))
+                                    .size(12.0)
+                                    .color(pal.ink_muted),
+                                );
+
+                                // Inline plain-English quality selector for the active/selected card
+                                if (is_active_engine || selected) && entry.category != ModelCategory::LegacyOnnx {
+                                    ui.add_space(4.0);
+                                    ui.horizontal_wrapped(|ui| {
+                                        ui.label(
+                                            RichText::new("Quality / Size:")
+                                                .size(11.5)
+                                                .strong()
+                                                .color(pal.ink_muted),
+                                        );
+                                        match entry.category {
+                                            ModelCategory::TinyCpu => {
+                                                for (val, lbl) in [("int8", "Balanced (int8)"), ("int4", "Ultra-Compact (int4)")] {
+                                                    if ui
+                                                        .radio_value(
+                                                            &mut self.draft_tiny_weights,
+                                                            val.into(),
+                                                            lbl,
+                                                        )
+                                                        .changed()
+                                                    {
+                                                        self.draft_tiny_backend = "onnx".into();
+                                                        self.draft_model_name = entry.repo_id.into();
+                                                        switch_requested = true;
+                                                    }
+                                                }
+                                            }
+                                            ModelCategory::KokoroOnnx => {
+                                                for (val, lbl) in [
+                                                    ("int8", "Compact (88 MB · int8)"),
+                                                    ("fp16", "Balanced (169 MB · fp16)"),
+                                                    ("fp32", "Full Studio (310 MB · fp32)"),
+                                                ] {
+                                                    if ui
+                                                        .radio_value(
+                                                            &mut self.draft_kokoro_weights,
+                                                            val.into(),
+                                                            lbl,
+                                                        )
+                                                        .changed()
+                                                    {
+                                                        self.draft_model_name = entry.repo_id.into();
+                                                        switch_requested = true;
+                                                    }
+                                                }
+                                            }
+                                            ModelCategory::StudioLm => {
+                                                for (val, lbl) in [
+                                                    ("emb4", "Compact (492 MB · emb4)"),
+                                                    ("packed", "Lossless (954 MB · packed)"),
+                                                    ("full", "Full (3.47 GB · bf16)"),
+                                                ] {
+                                                    if ui
+                                                        .radio_value(
+                                                            &mut self.draft_k2_weights,
+                                                            val.into(),
+                                                            lbl,
+                                                        )
+                                                        .changed()
+                                                    {
+                                                        self.draft_model_name = entry.repo_id.into();
+                                                        switch_requested = true;
+                                                    }
+                                                }
+                                            }
+                                            ModelCategory::LegacyOnnx => {}
+                                        }
+                                    });
+                                }
+                            });
+
+                        if activate_this {
+                            self.draft_model_name = entry.repo_id.to_string();
+                            self.draft_custom_repo.clear();
+                            if let Some(dw) = entry.default_weights {
+                                match entry.category {
+                                    ModelCategory::TinyCpu => {
+                                        self.draft_tiny_weights = dw.to_string();
+                                    }
+                                    ModelCategory::KokoroOnnx => {
+                                        self.draft_kokoro_weights = dw.to_string();
+                                    }
+                                    ModelCategory::StudioLm => {
+                                        self.draft_k2_weights = dw.to_string();
+                                    }
+                                    ModelCategory::LegacyOnnx => {}
+                                }
+                            }
                             switch_requested = true;
                         }
+                        ui.add_space(4.0);
+                    }
+                });
 
-                        if matches!(self.busy, Some(BusyTask::LoadingModel(_))) {
-                            ui.spinner();
-                            ui.label(
-                                RichText::new("Downloading / initializing model weights...")
-                                    .color(pal.primary)
-                                    .strong(),
-                            );
+                ui.add_space(10.0);
+
+                // Collapsible Advanced Hardware & Custom Model Settings
+                styled_card(ui, pal, |ui| {
+                    egui::CollapsingHeader::new(
+                        RichText::new("Advanced Hardware, Custom Models & Cache")
+                            .size(14.5)
+                            .strong()
+                            .color(pal.ink),
+                    )
+                    .id_salt("advanced_engine_settings")
+                    .default_open(false)
+                    .show(ui, |ui| {
+                        ui.add_space(4.0);
+                        let selected_cat = MODEL_CATALOG
+                            .iter()
+                            .find(|m| m.repo_id == self.draft_model_name)
+                            .map(|m| m.category);
+
+                        match selected_cat {
+                            Some(ModelCategory::TinyCpu) => {
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.label("Runtime:");
+                                    if ui
+                                        .radio_value(
+                                            &mut self.draft_tiny_backend,
+                                            "onnx".into(),
+                                            "ONNX (Fastest CPU)",
+                                        )
+                                        .changed()
+                                    {
+                                        switch_requested = true;
+                                    }
+                                    if ui
+                                        .radio_value(
+                                            &mut self.draft_tiny_backend,
+                                            "torch".into(),
+                                            "PyTorch (FP32)",
+                                        )
+                                        .changed()
+                                    {
+                                        switch_requested = true;
+                                    }
+                                });
+                            }
+                            Some(ModelCategory::StudioLm) => {
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.label("Audio Decoder:");
+                                    if ui
+                                        .radio_value(
+                                            &mut self.draft_k2_decoder,
+                                            "student_w4".into(),
+                                            "student_w4 (39 MB compact)",
+                                        )
+                                        .changed()
+                                    {
+                                        switch_requested = true;
+                                    }
+                                    if ui
+                                        .radio_value(
+                                            &mut self.draft_k2_decoder,
+                                            "default".into(),
+                                            "default (459 MB best quality)",
+                                        )
+                                        .changed()
+                                    {
+                                        switch_requested = true;
+                                    }
+                                });
+                            }
+                            _ => {}
                         }
+
+                        ui.horizontal_wrapped(|ui| {
+                            ui.add(
+                                egui::Slider::new(&mut self.draft_threads, 1..=16)
+                                    .text("CPU Threads"),
+                            );
+                            ui.label("Device:");
+                            for (val, lbl) in [
+                                ("auto", "Auto"),
+                                ("cpu", "CPU"),
+                                ("cuda", "CUDA GPU"),
+                                ("amd_gpu", "DirectML GPU"),
+                            ] {
+                                if ui.radio_value(&mut self.draft_device, val.into(), lbl).changed() {
+                                    switch_requested = true;
+                                }
+                            }
+                        });
+
+                        ui.separator();
+
+                        ui.horizontal(|ui| {
+                            ui.label("Custom Repo or Local Folder:");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.draft_custom_repo)
+                                    .hint_text("Optional: folder path (KittenTTS or Kokoro .onnx+.bin) or HF repo ID")
+                                    .desired_width(300.0),
+                            );
+                            if ui.button("Browse Folder...").clicked() {
+                                if let Some(dir) = rfd::FileDialog::new().pick_folder() {
+                                    self.draft_custom_repo = dir.to_string_lossy().to_string();
+                                }
+                            }
+                        });
+
+                        ui.horizontal(|ui| {
+                            ui.label("Custom Model Cache Dir:");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.config.cache_dir)
+                                    .hint_text("Default (~/.cache/huggingface & ~/.cache/voxa-studio)")
+                                    .desired_width(280.0),
+                            );
+                            if ui.button("Browse...").clicked() {
+                                if let Some(dir) = rfd::FileDialog::new().pick_folder() {
+                                    self.config.cache_dir = dir.to_string_lossy().to_string();
+                                    self.storage.save_config(&self.config);
+                                }
+                            }
+                        });
+
+                        ui.horizontal(|ui| {
+                            ui.label("HF Token (private repos only):");
+                            ui.add(
+                                egui::TextEdit::singleline(&mut self.config.hf_token)
+                                    .password(true)
+                                    .hint_text("Optional")
+                                    .desired_width(240.0),
+                            );
+                            if ui.button("Save Preferences").clicked() {
+                                self.storage.save_config(&self.config);
+                                self.banner = Some(BannerMessage {
+                                    kind: BannerKind::Success,
+                                    text: "Saved preferences.".to_string(),
+                                    detail: None,
+                                });
+                            }
+                        });
+
+                        ui.add_space(6.0);
+                        ui.horizontal(|ui| {
+                            let load_btn = egui::Button::new(
+                                RichText::new("Reload / Load Custom Model")
+                                    .size(13.5)
+                                    .strong()
+                                    .color(pal.on_primary),
+                            )
+                            .fill(pal.primary)
+                            .min_size(Vec2::new(205.0, 34.0))
+                            .corner_radius(CornerRadius::same(9));
+                            if ui.add(load_btn).clicked() {
+                                switch_requested = true;
+                            }
+                        });
                     });
                 });
 
@@ -4516,6 +4972,10 @@ mod tests {
         let req = WorkerRequest::Generate(GenerateRequest {
             text: "Hello world".into(),
             voice: Some("Eleanor".into()),
+            voice_blend: Some(VoiceBlend {
+                second_voice: "am_adam".into(),
+                primary_weight: 0.6,
+            }),
             language: Some("en".into()),
             reference: None,
             reference_text: None,
@@ -4535,6 +4995,32 @@ mod tests {
         let json = serde_json::to_string(&req).unwrap();
         assert!(json.contains("\"cmd\":\"generate\""));
         assert!(json.contains("\"voice\":\"Eleanor\""));
+        assert!(json.contains("\"second_voice\":\"am_adam\""));
+
+        let ext_req = serde_json::to_string(&WorkerRequest::ExtractDocument {
+            path: "book.epub".into(),
+        })
+        .unwrap();
+        assert!(ext_req.contains("\"cmd\":\"extract_document\""));
+
+        let doc_evt: WorkerEvent = serde_json::from_str(
+            r#"{"event":"document_extracted","title":"Sample Book","path":"book.epub","chapters":[{"title":"Ch 1","text":"Once upon a time.","char_count":17}]}"#,
+        )
+        .unwrap();
+        match doc_evt {
+            WorkerEvent::DocumentExtracted {
+                title, chapters, ..
+            } => {
+                assert_eq!(title, "Sample Book");
+                assert_eq!(chapters.len(), 1);
+            }
+            _ => panic!("unexpected event variant"),
+        }
+
+        assert!(MODEL_CATALOG
+            .iter()
+            .any(|m| m.repo_id == "kokoro-tts/kokoro-v1.0" && m.category == ModelCategory::KokoroOnnx));
+        assert_eq!(language_display_name("en-us"), "English (US)");
 
         let evt_json = r#"{"event":"generated","wav_path":"out.wav","sample_rate":24000,"duration_s":1.5,"elapsed_s":0.3,"chunks":1}"#;
         let evt: WorkerEvent = serde_json::from_str(evt_json).unwrap();

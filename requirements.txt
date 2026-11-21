@@ -1,3 +1,7 @@
 # Voxa Studio - Python synthesis sidecar dependencies
-# Installs the upstream KittenML/KittenTTS speech engine directly via pip (no Git or submodule required).
+# Installs upstream speech engines and EPUB/PDF readers directly via pip (no Git or submodule required).
 kittenml @ https://github.com/KittenML/KittenTTS/archive/5802f6b956844919ecf210f4e55f4750a6ad7c6f.zip
+kokoro-onnx>=0.4.0
+ebooklib>=0.18
+beautifulsoup4>=4.12.3
+pymupdf>=1.25.4
